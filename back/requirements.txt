@@ -1,0 +1,6 @@
+alembic==1.18.5
+asyncpg==0.31.0
+fastapi==0.141.1
+python-dotenv==1.2.2
+SQLAlchemy==2.0.51
+uvicorn[standard]==0.52.0
