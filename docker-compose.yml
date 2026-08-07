@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: cardnews
+      POSTGRES_PASSWORD: cardnews
+      POSTGRES_DB: cardnews
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  back:
+    build: ./back
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cardnews:cardnews@db:5432/cardnews
+    depends_on:
+      - db
+
+  front:
+    build: ./front
+    ports:
+      - "3000:3000"
+    depends_on:
+      - back
+
+volumes:
+  db_data:
