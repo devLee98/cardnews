@@ -1,109 +1,76 @@
 "use client";
 
-import { useRef, useState } from "react";
-import {
-  Check,
-  Download,
-  FileJson,
-  LayoutGrid,
-  Sparkles,
-  Table2,
-  Upload,
-  X,
-} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Download, FileJson, Sparkles, Upload } from "lucide-react";
 
-import { DataInspector, type JsonValue } from "@/components/data-inspector";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Badge } from "@/components/ui/badge";
+import { CardPlan, type CardPlanItem } from "@/components/card-plan";
+import { DataPanel } from "@/components/data-panel";
+import { StepCard, type StepState } from "@/components/step-card";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { analyzeData } from "@/lib/analyze-data";
+import type { JsonValue } from "@/lib/json";
 import { cn } from "@/lib/utils";
 
-type PreviewMode = "data" | "cards";
-
-const CARD_COUNTS = [6, 7, 8, 9, 10];
 const MAX_INSTRUCTION = 500;
 
 export default function CardNewsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [openSteps, setOpenSteps] = useState<string[]>(["step-1"]);
-  const [fileName, setFileName] = useState<string | null>(null);
   const [data, setData] = useState<JsonValue | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [fileSize, setFileSize] = useState(0);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [cardCount, setCardCount] = useState(7);
+  const [planConfirmed, setPlanConfirmed] = useState(false);
   const [instruction, setInstruction] = useState("");
-  const [preview, setPreview] = useState<PreviewMode>("data");
 
+  // AI 연결 전이라 구성안은 아직 비어 있다. 연결되면 여기에 응답을 넣는다.
+  const [cardPlan] = useState<CardPlanItem[] | null>(null);
+
+  const analysis = useMemo(() => (data ? analyzeData(data) : null), [data]);
   const hasData = data !== null;
-
-  const fieldCount =
-    data && typeof data === "object" && !Array.isArray(data)
-      ? Object.keys(data).length
-      : 0;
 
   async function readFile(file: File) {
     setFileError(null);
+
+    // 확장자가 .json 이 아니면 파일을 읽지 않고 여기서 끝낸다.
+    // input 의 accept 는 파일 탐색기 필터일 뿐이라 끌어다 놓는 경로는 막지 못한다.
+    if (!/\.json$/i.test(file.name)) {
+      setFileError("파일 형태 확인 후 다시 업로드해 주세요!");
+      return;
+    }
 
     try {
       const parsed = JSON.parse(await file.text()) as JsonValue;
 
       setData(parsed);
       setFileName(file.name);
-      setPreview("data");
-      setOpenSteps((prev) =>
-        prev.includes("step-2") ? prev : [...prev, "step-2"],
-      );
+      setFileSize(file.size);
+      setPlanConfirmed(false);
     } catch {
-      setData(null);
-      setFileName(null);
-      setFileError("JSON 형식이 아니거나 파일이 손상되었습니다.");
+      // 이미 올려둔 데이터가 있으면 그대로 두고 실패만 알린다
+      setFileError("파일이 손상되어 읽지 못했습니다. 확인 후 다시 올려주세요.");
     }
   }
 
-  function clearUpload() {
-    setData(null);
-    setFileName(null);
-    setFileError(null);
-    setPreview("data");
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  }
+  const uploadState: StepState = hasData ? "done" : "active";
+  const planState: StepState = !hasData
+    ? "idle"
+    : planConfirmed
+      ? "done"
+      : "active";
+  const instructionState: StepState = planConfirmed ? "active" : "idle";
 
   return (
     <div className="min-h-screen bg-muted/40">
       {/* ── 헤더 ── */}
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-6">
           <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Sparkles className="size-4" />
           </div>
-          <div className="flex flex-col">
-            <span className="text-sm leading-tight font-semibold">
-              큐닷 카드뉴스
-            </span>
-            <span className="text-xs leading-tight text-muted-foreground">
-              공구 데이터로 카드뉴스 만들기
-            </span>
-          </div>
+          <span className="text-sm font-semibold">큐닷 카드뉴스</span>
 
           <Button variant="outline" size="sm" disabled className="ml-auto">
             <Download />
@@ -112,280 +79,156 @@ export default function CardNewsPage() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1400px] grid-cols-1 items-start gap-6 p-6 lg:grid-cols-[380px_1fr]">
-        {/* ── 좌측: 단계 패널 ── */}
-        <div className="flex flex-col gap-4">
-          <Card className="overflow-hidden py-0">
-            <Accordion
-              type="multiple"
-              value={openSteps}
-              onValueChange={setOpenSteps}
-            >
-              {/* 1. 공구 데이터 업로드 */}
-              <AccordionItem value="step-1" className="px-5">
-                <AccordionTrigger className="py-4 hover:no-underline">
-                  <StepLabel num={1} label="공구 데이터 업로드" done={hasData} />
-                </AccordionTrigger>
-                <AccordionContent className="pb-5">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setDragging(true);
-                    }}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setDragging(false);
+      <main className="mx-auto grid max-w-[1400px] grid-cols-1 items-start gap-6 p-6 lg:grid-cols-[360px_1fr]">
+        {/* ── 좌측 단계 메뉴 ── */}
+        <aside className="flex flex-col gap-3">
+          {/* 1. 공구 데이터 업로드 */}
+          <div
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
 
-                      const file = event.dataTransfer.files[0];
-                      if (file) void readFile(file);
-                    }}
-                    className={cn(
-                      "flex w-full flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-8 transition-colors",
-                      dragging
-                        ? "border-primary bg-accent"
-                        : "hover:border-primary/50 hover:bg-accent/50",
-                    )}
-                  >
-                    <Upload className="size-5 text-muted-foreground" />
-                    <span className="text-sm font-medium">
-                      JSON 파일을 끌어다 놓기
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      또는 클릭해서 선택 (.json)
-                    </span>
-                  </button>
+              const file = event.dataTransfer.files[0];
+              if (file) void readFile(file);
+            }}
+            className={cn("rounded-xl", dragging && "ring-2 ring-amber-500/60")}
+          >
+            <StepCard
+              num={1}
+              title="공구 데이터 업로드"
+              state={uploadState}
+              subtitle={
+                hasData
+                  ? `${fileName} · ${Math.max(1, Math.round(fileSize / 1024))}KB`
+                  : "JSON 파일을 끌어다 놓거나 눌러서 선택"
+              }
+              action={hasData ? "다시 올리기" : undefined}
+              onAction={() => fileInputRef.current?.click()}
+              onClick={hasData ? undefined : () => fileInputRef.current?.click()}
+            />
+          </div>
 
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".json,application/json"
-                    className="hidden"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) void readFile(file);
-                    }}
-                  />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void readFile(file);
+            }}
+          />
 
-                  {fileName && (
-                    <div className="mt-3 flex items-center gap-2 rounded-lg border bg-card p-3">
-                      <FileJson className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate text-sm">{fileName}</span>
-                      <Badge variant="secondary" className="ml-auto shrink-0">
-                        필드 {fieldCount}
-                      </Badge>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-6 shrink-0"
-                        onClick={clearUpload}
-                        aria-label="업로드 취소"
-                      >
-                        <X />
-                      </Button>
-                    </div>
-                  )}
+          {fileError && (
+            <p className="px-1 text-xs text-destructive">{fileError}</p>
+          )}
 
-                  {hasData && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      오른쪽에서 내용을 확인하고 잘못된 값은 바로 고칠 수
-                      있습니다.
-                    </p>
-                  )}
+          {/* 2. 카드 구성 확인 */}
+          <StepCard
+            num={2}
+            title="카드 구성 확인"
+            state={planState}
+            subtitle={
+              !hasData
+                ? undefined
+                : planConfirmed
+                  ? "구성안 확인 완료"
+                  : cardPlan
+                    ? `${cardPlan.length}단 구성안 검토 중 →`
+                    : "AI 구성안 대기 중"
+            }
+          />
 
-                  {fileError && (
-                    <p className="mt-2 text-xs text-destructive">{fileError}</p>
-                  )}
-                </AccordionContent>
-              </AccordionItem>
+          {/* 3. 추가 인스트럭션 */}
+          <StepCard
+            num={3}
+            title="추가 인스트럭션"
+            state={instructionState}
+            subtitle="(선택)"
+          />
 
-              {/* 2. 카드 구성 제안 확인 */}
-              <AccordionItem value="step-2" className="px-5">
-                <AccordionTrigger className="py-4 hover:no-underline">
-                  <StepLabel num={2} label="카드 구성 제안 확인" done={false} />
-                </AccordionTrigger>
-                <AccordionContent className="pb-5">
-                  <p className="rounded-lg border border-dashed px-4 py-6 text-center text-xs leading-relaxed text-muted-foreground">
-                    AI가 제안한 카드 구성이
-                    <br />
-                    여기에 표시됩니다
-                  </p>
-                </AccordionContent>
-              </AccordionItem>
+          <Button size="lg" className="mt-1 w-full" disabled={!planConfirmed}>
+            <Sparkles />
+            AI 생성하기
+          </Button>
+        </aside>
 
-              {/* 3. 추가 인스트럭션 */}
-              <AccordionItem value="step-3" className="border-b-0 px-5">
-                <AccordionTrigger className="py-4 hover:no-underline">
-                  <StepLabel
-                    num={3}
-                    label="추가 인스트럭션"
-                    done={instruction.trim().length > 0}
-                  />
-                </AccordionTrigger>
-                <AccordionContent className="pb-5">
+        {/* ── 우측 결과 영역 ── */}
+        <section>
+          {analysis && data ? (
+            <div className="flex flex-col gap-5">
+              <DataPanel analysis={analysis} data={data} onChange={setData} />
+
+              <CardPlan
+                plan={cardPlan}
+                confirmed={planConfirmed}
+                onConfirm={() => setPlanConfirmed(true)}
+              />
+
+              {/* 추가 인스트럭션 — 구성안을 확인해야 열린다 */}
+              <section
+                className={cn(
+                  "rounded-xl border bg-card",
+                  !planConfirmed && "opacity-60",
+                )}
+              >
+                <div className="flex items-center gap-3 px-5 pt-5">
+                  <h2 className="text-sm font-semibold">추가 인스트럭션</h2>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {planConfirmed
+                      ? "선택 입력"
+                      : "카드 구성안을 확인하면 열립니다"}
+                  </span>
+                </div>
+
+                <div className="px-5 pt-4 pb-5">
                   <Textarea
                     value={instruction}
+                    disabled={!planConfirmed}
                     maxLength={MAX_INSTRUCTION}
                     onChange={(event) => setInstruction(event.target.value)}
                     placeholder="추가로 참고했으면 하는 내용을 적어주세요"
-                    className="min-h-[110px] resize-none"
+                    className="min-h-[100px] resize-none"
                   />
                   <p className="mt-1.5 text-right text-xs text-muted-foreground">
                     {instruction.length} / {MAX_INSTRUCTION}
                   </p>
+                </div>
+              </section>
 
-                  <Separator className="my-4" />
-
-                  <p className="mb-2.5 text-sm font-medium">카드뉴스 장수</p>
-                  <ToggleGroup
-                    type="single"
-                    variant="outline"
-                    value={String(cardCount)}
-                    onValueChange={(value) => {
-                      if (value) setCardCount(Number(value));
-                    }}
-                    className="justify-start"
-                  >
-                    {CARD_COUNTS.map((count) => (
-                      <ToggleGroupItem
-                        key={count}
-                        value={String(count)}
-                        className="px-3"
-                      >
-                        {count}장
-                      </ToggleGroupItem>
-                    ))}
-                  </ToggleGroup>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </Card>
-
-          {/* 4. AI 생성 */}
-          <div>
-            <Button size="lg" className="w-full" disabled={!hasData}>
-              <Sparkles />
-              AI 생성하기
-            </Button>
-            {!hasData && (
-              <p className="mt-2 text-center text-xs text-muted-foreground">
-                공구 데이터를 업로드하면 활성화됩니다
+              {/* 카드 초안 자리 */}
+              <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">
+                생성하면 이 자리에 카드가 표시됩니다
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-[560px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-card">
+              <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+                <FileJson className="size-5 text-muted-foreground" />
+              </div>
+              <p className="text-center text-sm text-muted-foreground">
+                아직 업로드된 데이터가 없습니다
+                <br />
+                왼쪽 1단계에서 공구 JSON을 올려주세요
               </p>
-            )}
-          </div>
-        </div>
-
-        {/* ── 우측: 미리보기 ── */}
-        <Card className="min-h-[720px]">
-          <CardHeader className="border-b">
-            <CardTitle className="text-base">
-              {preview === "data" ? "공구 데이터 미리보기" : "카드 미리보기"}
-            </CardTitle>
-            <CardDescription>
-              {preview === "data"
-                ? hasData
-                  ? "값을 클릭해서 바로 고칠 수 있습니다"
-                  : "업로드한 공구 데이터가 여기에 표시됩니다"
-                : "생성하면 여기에 카드가 표시됩니다"}
-            </CardDescription>
-
-            <CardAction>
-              <ToggleGroup
-                type="single"
+              <Button
                 variant="outline"
-                value={preview}
-                onValueChange={(value) => {
-                  if (value) setPreview(value as PreviewMode);
-                }}
+                size="sm"
+                className="mt-1"
+                onClick={() => fileInputRef.current?.click()}
               >
-                <ToggleGroupItem value="data" disabled={!hasData}>
-                  <Table2 />
-                  공구 데이터
-                </ToggleGroupItem>
-                <ToggleGroupItem value="cards">
-                  <LayoutGrid />
-                  카드
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </CardAction>
-          </CardHeader>
-
-          <CardContent>
-            {preview === "data" ? (
-              hasData ? (
-                <DataInspector data={data} onChange={setData} />
-              ) : (
-                <EmptyState
-                  icon={<FileJson className="size-5 text-muted-foreground" />}
-                  message={
-                    <>
-                      아직 업로드된 데이터가 없습니다
-                      <br />
-                      왼쪽 1단계에서 공구 JSON을 올려주세요
-                    </>
-                  }
-                />
-              )
-            ) : (
-              <EmptyState
-                icon={<LayoutGrid className="size-5 text-muted-foreground" />}
-                message={
-                  <>
-                    아직 생성된 카드가 없습니다
-                    <br />
-                    왼쪽에서 데이터를 올리고 AI 생성하기를 눌러주세요
-                  </>
-                }
-              />
-            )}
-          </CardContent>
-        </Card>
+                <Upload />
+                파일 선택
+              </Button>
+            </div>
+          )}
+        </section>
       </main>
-    </div>
-  );
-}
-
-function StepLabel({
-  num,
-  label,
-  done,
-}: {
-  num: number;
-  label: string;
-  done: boolean;
-}) {
-  return (
-    <span className="flex items-center gap-3">
-      <span
-        className={cn(
-          "flex size-6 shrink-0 items-center justify-center rounded-full border text-xs transition-colors",
-          done
-            ? "border-primary bg-primary text-primary-foreground"
-            : "text-muted-foreground",
-        )}
-      >
-        {done ? <Check className="size-3.5" /> : num}
-      </span>
-      <span className="text-sm font-medium">{label}</span>
-    </span>
-  );
-}
-
-function EmptyState({
-  icon,
-  message,
-}: {
-  icon: React.ReactNode;
-  message: React.ReactNode;
-}) {
-  return (
-    <div className="flex min-h-[560px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed">
-      <div className="flex size-12 items-center justify-center rounded-full bg-muted">
-        {icon}
-      </div>
-      <p className="text-center text-sm text-muted-foreground">{message}</p>
     </div>
   );
 }
