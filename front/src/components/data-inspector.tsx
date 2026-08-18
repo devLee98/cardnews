@@ -5,6 +5,12 @@ import { ChevronRight, ImageOff } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  isPrimitive,
+  updateAtPath,
+  type JsonPath as Path,
+  type JsonValue,
+} from "@/lib/json";
 import { cn } from "@/lib/utils";
 
 /* ────────────────────────────────────────────────
@@ -15,40 +21,6 @@ import { cn } from "@/lib/utils";
    목록은 한 줄 요약만 보여주고 클릭했을 때만 내용을 펼친다.
    ──────────────────────────────────────────────── */
 
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
-
-type Path = (string | number)[];
-
-/** path 위치의 값만 바꾼 새 객체를 만든다. */
-export function updateAtPath(
-  root: JsonValue,
-  path: Path,
-  value: JsonValue,
-): JsonValue {
-  if (path.length === 0) return value;
-
-  const [head, ...rest] = path;
-
-  if (Array.isArray(root)) {
-    const next = [...root];
-    next[head as number] = updateAtPath(next[head as number], rest, value);
-    return next;
-  }
-
-  if (root && typeof root === "object") {
-    const record = root as Record<string, JsonValue>;
-    return { ...record, [head]: updateAtPath(record[head], rest, value) };
-  }
-
-  return value;
-}
-
 const IMAGE_PATTERN = /\.(png|jpe?g|webp|gif|avif)(\?|$)/i;
 
 function isImageUrl(value: JsonValue): value is string {
@@ -57,10 +29,6 @@ function isImageUrl(value: JsonValue): value is string {
     /^https?:\/\//.test(value) &&
     (IMAGE_PATTERN.test(value) || /image|img|thumb|photo/i.test(value))
   );
-}
-
-function isPrimitive(value: JsonValue) {
-  return value === null || typeof value !== "object";
 }
 
 function isObjectArray(value: JsonValue): value is Record<string, JsonValue>[] {
