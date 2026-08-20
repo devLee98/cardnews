@@ -1,14 +1,33 @@
 import json
 import os
+import random
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from assets import gather_candidates, to_supported
 from card_spec import CARD_STAGES, MAX_CARDS
-from inventory import build_inventory, empty_paths, render_inventory
-from prompts import PLAN_RESPONSE_SCHEMA, PLAN_SYSTEM_PROMPT, build_plan_prompt
+from inventory import (
+    build_inventory,
+    empty_paths,
+    extract_values,
+    find_image_urls,
+    render_inventory,
+)
+from prompts import (
+    ASSET_RESPONSE_SCHEMA,
+    ASSET_SYSTEM_PROMPT,
+    DRAFT_RESPONSE_SCHEMA,
+    DRAFT_SYSTEM_PROMPT,
+    IMAGE_SIZE,
+    PLAN_RESPONSE_SCHEMA,
+    PLAN_SYSTEM_PROMPT,
+    build_draft_prompt,
+    build_image_prompt,
+    build_plan_prompt,
+)
 
 # database.py 를 거치지 않고 이 모듈만 불러도 .env 가 읽히도록 한다
 load_dotenv()
@@ -26,8 +45,21 @@ TEXT_MODEL = os.getenv("OPENAI_TEXT_MODEL", "gpt-5")
 # 추론 모델이 아닌 모델(gpt-4.1 등)을 쓸 때는 빈 값으로 두어 옵션을 빼야 한다.
 REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip()
 
+IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+
+#: 이미지 생성에 참조로 넣을 수 있는 유일한 경로
+REFERENCE_PATH = "events[].products[].detail_image_urls"
+
 # 단계를 명세 순서대로 되돌리기 위한 표
 STAGE_ORDER = {stage["stage"]: index for index, stage in enumerate(CARD_STAGES)}
+
+#: 가격표 카드는 공구 카드뉴스에 반드시 한 장 있어야 한다
+PRICE_STAGE = "가격 & 스펙"
+PRICE_PATHS = next(
+    stage["required"] + stage["optional"]
+    for stage in CARD_STAGES
+    if stage["stage"] == PRICE_STAGE
+)
 
 
 class PlanRequest(BaseModel):
@@ -39,7 +71,6 @@ class PlanCard(BaseModel):
     section: str
     source_keys: list[str] = Field(default_factory=list, alias="sourceKeys")
     description: str
-
     model_config = {"populate_by_name": True}
 
 
@@ -124,6 +155,21 @@ async def create_plan(payload: PlanRequest):
             seen.add(section)
             unique.append(card)
 
+    # 가격표는 공구 카드뉴스의 핵심이라 빠지면 안 된다.
+    # 데이터에 가격이 있는데 AI 가 빠뜨렸으면 여기서 채워 넣는다.
+    if PRICE_STAGE not in seen:
+        available = {row["path"] for row in inventory if row["filled"]}
+        price_paths = [path for path in PRICE_PATHS if path in available]
+
+        if price_paths:
+            unique.append(
+                {
+                    "section": PRICE_STAGE,
+                    "source_keys": price_paths,
+                    "description": "구성별 정가와 할인율, 공구가를 표로 정리",
+                }
+            )
+
     unique.sort(key=lambda card: STAGE_ORDER[card["section"]])
 
     return PlanResponse(
@@ -136,4 +182,525 @@ async def create_plan(payload: PlanRequest):
             for card in unique[:MAX_CARDS]
         ],
         emptyKeys=missing,
+    )
+
+
+# ────────────────────────────────────────────────
+# 상세 이미지 살펴보기
+# 브랜드가 이미 만들어 둔 사진 중 카드에 그대로 쓸 만한 것을 골라 둔다.
+# 업로드 직후 구성안 생성과 나란히 돌려도 되므로 따로 뺐다.
+# ────────────────────────────────────────────────
+
+
+class AssetRequest(BaseModel):
+    data: Any
+
+
+class AssetCard(BaseModel):
+    index: int
+    url: str
+    scene: str
+    text_amount: str = Field(alias="textAmount")
+    suggest: str
+    animated: bool
+
+    model_config = {"populate_by_name": True}
+
+
+class AssetResponse(BaseModel):
+    images: list[AssetCard]
+
+
+@router.post("/assets", response_model=AssetResponse, response_model_by_alias=True)
+async def inspect_assets(payload: AssetRequest):
+    """상세 이미지를 훑어서 카드에 쓸 만한 것만 설명과 함께 돌려준다."""
+
+    candidates = await gather_candidates(payload.data)
+
+    if not candidates:
+        return AssetResponse(images=[])
+
+    client = _client()
+
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": "\n".join(
+                f"{index}번 이미지 ({candidate.width}x{candidate.height}"
+                + (", 움직이는 이미지" if candidate.animated else "")
+                + ")"
+                for index, candidate in enumerate(candidates)
+            ),
+        }
+    ]
+
+    for candidate in candidates:
+        content.append(
+            {
+                "type": "image_url",
+                # 자세히 볼 필요는 없고 무엇이 찍혔는지만 알면 된다
+                "image_url": {"url": candidate.preview, "detail": "low"},
+            }
+        )
+
+    options: dict[str, Any] = {}
+    if REASONING_EFFORT:
+        options["reasoning_effort"] = REASONING_EFFORT
+
+    try:
+        completion = await client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[
+                {"role": "system", "content": ASSET_SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": ASSET_RESPONSE_SCHEMA,
+            },
+            **options,
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"상세 이미지를 살펴보지 못했습니다: {error}",
+        ) from error
+
+    body = completion.choices[0].message.content
+    if not body:
+        return AssetResponse(images=[])
+
+    judged = {item["index"]: item for item in json.loads(body).get("images", [])}
+
+    images = []
+    for index, candidate in enumerate(candidates):
+        verdict = judged.get(index)
+
+        # 움직이는 것은 사용자가 눈으로 보고 직접 고르므로 판단으로 걸러내지 않는다.
+        # 정지한 것은 참조로 자동으로 쓰이니 쓸 만하다고 본 것만 남긴다.
+        if not candidate.animated and (not verdict or not verdict.get("usable")):
+            continue
+
+        images.append(
+            AssetCard(
+                index=index,
+                url=candidate.url,
+                scene=(verdict or {}).get("scene", ""),
+                textAmount=(verdict or {}).get("text_amount", "none"),
+                suggest=(verdict or {}).get("suggest", "없음"),
+                animated=candidate.animated,
+            )
+        )
+
+    return AssetResponse(images=images)
+
+
+# ────────────────────────────────────────────────
+# 카드 문구 생성
+# 카드를 한 번에 다 쓰게 해야 앞뒤 흐름이 이어지고 같은 말이 겹치지 않는다.
+# ────────────────────────────────────────────────
+
+
+class PlanCardInput(BaseModel):
+    section: str
+    source_keys: list[str] = Field(default_factory=list, alias="sourceKeys")
+    description: str = ""
+
+    model_config = {"populate_by_name": True}
+
+
+class AssetInput(BaseModel):
+    index: int
+    url: str
+    scene: str = ""
+    text_amount: str = Field(default="none", alias="textAmount")
+    suggest: str = ""
+    animated: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
+class DraftRequest(BaseModel):
+    data: Any
+    cards: list[PlanCardInput]
+    instruction: str | None = None
+    assets: list[AssetInput] = Field(default_factory=list)
+
+
+class DraftItem(BaseModel):
+    label: str
+    value: str
+    # 가격 항목일 때만 채워진다 (정가 / 할인율)
+    original: str = ""
+    discount: str = ""
+
+
+class DraftCard(BaseModel):
+    section: str
+    title: str
+    body: str
+    # 문구와 함께 AI 가 정한 카드 디자인
+    highlight: str = ""
+    text_position: str = Field(default="bottom", alias="textPosition")
+    text_align: str = Field(default="left", alias="textAlign")
+    theme: str = "dark"
+    items: list[DraftItem] = Field(default_factory=list)
+    #: 이 카드를 만들 때 우선으로 참고할 브랜드 상세컷 (정지 이미지).
+    #: 최종 이미지가 아니라 참조다. 문구는 새로 그려진다.
+    reference_url: str = Field(default="", alias="referenceUrl")
+    #: 움직이는 상세컷을 고른 카드면 그 주소.
+    #: gpt-image 는 gif 를 못 만들어서 이 카드만 원본을 그대로 쓰고 문구는 아래에 붙인다.
+    animated_url: str = Field(default="", alias="animatedUrl")
+
+    model_config = {"populate_by_name": True}
+
+
+class DraftResponse(BaseModel):
+    cards: list[DraftCard]
+
+
+TEXT_POSITIONS = {"top", "center", "bottom"}
+TEXT_ALIGNS = {"left", "center"}
+THEMES = {"dark", "light"}
+MAX_ITEMS = 4
+
+#: 움직이는 상세컷을 그대로 쓸 수 있는 카드 수의 상한.
+#: 이 카드만 문구가 이미지 밖에 붙어서 결이 다르므로 너무 많으면 흐름이 깨진다.
+MAX_ANIMATED = 3
+
+#: 문구 생성 때 한 번에 보여줄 상세컷 수.
+#: 후보를 전부 보여주면 매번 같은 것만 고른다. 매번 다른 묶음을 보여줘 결과를 갈리게 한다.
+CATALOG_SAMPLE = 8
+
+#: 참조로 넣을 상품 사진 최대 장수.
+#: 브랜드 상세컷을 여러 장 보여줄수록 실제 촬영 톤에 가깝게 나온다.
+MAX_REFERENCES = 5
+
+
+def _pick(value: Any, allowed: set[str], fallback: str) -> str:
+    return value if value in allowed else fallback
+
+
+@router.post("/draft", response_model=DraftResponse, response_model_by_alias=True)
+async def create_draft(payload: DraftRequest):
+    """확정된 구성안으로 카드마다 들어갈 제목과 본문을 쓴다."""
+
+    if not payload.cards:
+        raise HTTPException(status_code=400, detail="카드 구성안이 비어 있습니다.")
+
+    # 구성안이 지목한 경로의 실제 값만 뽑는다. 원본 JSON 은 너무 커서 그대로 못 보낸다.
+    paths = sorted({path for card in payload.cards for path in card.source_keys})
+    values = extract_values(payload.data, paths)
+
+    plan = [card.model_dump(by_alias=False) for card in payload.cards]
+
+    # 후보를 전부, 그것도 늘 같은 순서로 보여주면 매번 같은 것만 고른다.
+    # 번호는 그대로 두고 매번 다른 묶음을 다른 차례로 보여준다.
+    catalog = [asset.model_dump(by_alias=False) for asset in payload.assets]
+    if len(catalog) > CATALOG_SAMPLE:
+        catalog = random.sample(catalog, CATALOG_SAMPLE)
+    random.shuffle(catalog)
+
+    client = _client()
+
+    options: dict[str, Any] = {}
+    if REASONING_EFFORT:
+        options["reasoning_effort"] = REASONING_EFFORT
+
+    try:
+        completion = await client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[
+                {"role": "system", "content": DRAFT_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": build_draft_prompt(
+                        plan,
+                        values,
+                        payload.instruction,
+                        catalog,
+                    ),
+                },
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": DRAFT_RESPONSE_SCHEMA,
+            },
+            **options,
+        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"카드 문구 생성에 실패했습니다: {error}",
+        ) from error
+
+    content = completion.choices[0].message.content
+    if not content:
+        raise HTTPException(status_code=502, detail="문구 응답이 비어 있습니다.")
+
+    written = json.loads(content).get("cards", [])
+
+    by_index = {asset.index: asset for asset in payload.assets}
+    taken: set[str] = set()
+
+    animated_used = 0
+    last_index = len(payload.cards) - 1
+
+    # 움짤은 사용자가 고른 것만 넘어온다. 고른 개수와 상한 중 작은 쪽까지 쓴다.
+    picked = [asset for asset in payload.assets if asset.animated][:MAX_ANIMATED]
+    max_animated = len(picked)
+
+    # 단계가 밀리지 않도록 순서대로 짝지어 붙이고, 단계 이름은 구성안 것을 쓴다.
+    cards = []
+    for index, card in enumerate(payload.cards):
+        source = written[index] if index < len(written) else {}
+        items = source.get("items") or []
+
+        # 같은 상세컷이 여러 카드에 겹쳐 쓰이지 않게 한 번 쓰면 뺀다
+        asset = by_index.get(source.get("image_index", -1))
+        chosen = asset.url if asset else ""
+
+        if chosen in taken:
+            chosen, asset = "", None
+        if chosen:
+            taken.add(chosen)
+
+        # 움짤을 원본 그대로 쓸지 판단한다.
+        # 첫 장과 마지막 장은 공구 이름과 마감 시각이 크게 들어가야 해서 쓰지 않는다.
+        # 자리가 없으면 버리지 않고 정지 참조로 돌린다 (첫 프레임이 참고 자료가 된다).
+        use_animated = bool(asset and asset.animated)
+
+        if use_animated and (
+            index in (0, last_index) or animated_used >= max_animated
+        ):
+            use_animated = False
+
+        if use_animated:
+            animated_used += 1
+
+        cards.append(
+            DraftCard(
+                section=card.section,
+                title=source.get("title", ""),
+                body=source.get("body", ""),
+                highlight=source.get("highlight", ""),
+                textPosition=_pick(
+                    source.get("text_position"), TEXT_POSITIONS, "bottom"
+                ),
+                textAlign=_pick(source.get("text_align"), TEXT_ALIGNS, "left"),
+                theme=_pick(source.get("theme"), THEMES, "dark"),
+                items=[
+                    DraftItem(
+                        label=item.get("label", ""),
+                        value=item.get("value", ""),
+                        original=item.get("original", ""),
+                        discount=item.get("discount", ""),
+                    )
+                    for item in items[:MAX_ITEMS]
+                    if item.get("label") or item.get("value")
+                ],
+                referenceUrl="" if use_animated else chosen,
+                animatedUrl=chosen if use_animated else "",
+            )
+        )
+
+    _place_picked_animations(cards, picked)
+
+    return DraftResponse(cards=cards)
+
+
+def _place_picked_animations(
+    cards: list[DraftCard], picked: list[AssetInput]
+) -> None:
+    """사용자가 고른 움짤이 빠짐없이 쓰이도록 자리를 잡아 준다.
+
+    어느 카드에 넣을지는 AI 가 정하는 게 원칙이지만, 고른 것을 쓰지 않고 넘어가면
+    고른 의미가 없다. AI 가 빠뜨린 것만 여기서 채워 넣는다.
+    """
+
+    if not picked or len(cards) < 3:
+        return
+
+    used = {card.animated_url for card in cards if card.animated_url}
+    # 첫 장과 마지막 장은 공구 이름과 마감 시각이 크게 들어가야 해서 비워 둔다
+    open_slots = list(range(1, len(cards) - 1))
+
+    for asset in picked:
+        if asset.url in used:
+            continue
+
+        # 이미 움짤이 들어간 자리는 건너뛴다
+        free = [index for index in open_slots if not cards[index].animated_url]
+        if not free:
+            return
+
+        # 비전 모델이 어울린다고 본 단계를 먼저 찾고, 없으면 앞쪽 빈자리에 넣는다
+        target = next(
+            (index for index in free if cards[index].section == asset.suggest),
+            free[0],
+        )
+
+        cards[target].animated_url = asset.url
+        cards[target].reference_url = ""
+        used.add(asset.url)
+
+
+# ────────────────────────────────────────────────
+# 카드 배경 이미지 생성
+# 카드마다 30~60초가 걸려서 한 장씩 따로 부른다. 프론트가 몇 개씩 나눠 호출한다.
+# ────────────────────────────────────────────────
+
+
+class ImageRequest(BaseModel):
+    data: Any
+    section: str
+    title: str = ""
+    body: str = ""
+    highlight: str = ""
+    items: list[DraftItem] = Field(default_factory=list)
+    source_keys: list[str] = Field(default_factory=list, alias="sourceKeys")
+    #: 이 카드에 어울린다고 고른 상세컷. 있으면 맨 앞 참조로 쓴다.
+    reference_url: str = Field(default="", alias="referenceUrl")
+    # 문구를 이미지 안에 함께 그리므로 배치와 톤도 넘긴다
+    text_position: str = Field(default="bottom", alias="textPosition")
+    text_align: str = Field(default="left", alias="textAlign")
+    theme: str = "dark"
+
+    model_config = {"populate_by_name": True}
+
+
+class ImageResponse(BaseModel):
+    image_base64: str = Field(alias="imageBase64")
+    used_reference: bool = Field(alias="usedReference")
+
+    model_config = {"populate_by_name": True}
+
+
+#: 배너나 여백용으로 쓰이는 얇은 띠 이미지가 섞여 있어서 너무 작은 파일은 버린다
+MIN_REFERENCE_BYTES = 20_000
+MAX_REFERENCE_BYTES = 20_000_000
+
+
+async def _download(url: str) -> tuple[bytes, str] | None:
+    """상품 사진을 내려받는다. 쓸 수 없는 파일이면 None 을 준다."""
+
+    import httpx2
+
+    try:
+        async with httpx2.AsyncClient(timeout=20, follow_redirects=True) as http:
+            response = await http.get(url)
+            response.raise_for_status()
+
+            # Content-Type 을 안 보내는 서버가 있어서 헤더만 보고 거르지 않는다.
+            # 실제로 열리는지는 to_supported 가 판단한다.
+            content_type = response.headers.get("content-type", "").split(";")[0]
+
+            size = len(response.content)
+            if size < MIN_REFERENCE_BYTES or size > MAX_REFERENCE_BYTES:
+                return None
+
+            # gif 나 헤더가 없는 파일은 여기서 형식을 맞춰 준다
+            return to_supported(response.content, content_type)
+    except Exception:
+        return None
+
+
+@router.post("/image", response_model=ImageResponse, response_model_by_alias=True)
+async def create_image(payload: ImageRequest):
+    """카드 1장의 배경 이미지를 만든다. 문구는 얹지 않고 그림만 만든다."""
+
+    client = _client()
+
+    # 구성안이 상품 사진을 쓰라고 지목한 카드만 사진을 참조로 넣는다.
+    # (제품명을 노출하면 안 되는 단계는 애초에 image_url 을 지목하지 않는다)
+    #
+    # 대표 사진 한 장만 주면 배경이 브랜드와 겉도는 그림이 나온다.
+    # 상세 이미지까지 같이 넣으면 실제 연출 톤을 따라간다.
+    # 참조는 detail_image_urls 안의 이미지만 쓴다. 반드시 지켜야 하는 규칙이다.
+    # 대표 사진(image_url)은 상품마다 같은 컷이 반복되는 경우가 많아
+    # 그것만 보고 그리면 카드가 다 비슷해진다.
+    # 호출한 쪽이 무엇을 넘기든 여기서 경로를 고정한다.
+    paths = [REFERENCE_PATH]
+
+    # 카드마다 고른 상세컷을 맨 앞에 둔다. 그 장면을 가장 강하게 따라가게 된다.
+    urls = find_image_urls(payload.data, paths, limit=12)
+    if payload.reference_url:
+        urls = [payload.reference_url] + [
+            url for url in urls if url != payload.reference_url
+        ]
+
+    references: list[tuple[bytes, str]] = []
+    for url in urls:
+        downloaded = await _download(url)
+        if downloaded:
+            references.append(downloaded)
+        if len(references) >= MAX_REFERENCES:
+            break
+
+    prompt = build_image_prompt(
+        section=payload.section,
+        title=payload.title,
+        body=payload.body,
+        highlight=payload.highlight,
+        items=[item.model_dump() for item in payload.items],
+        has_reference=bool(references),
+        text_position=_pick(payload.text_position, TEXT_POSITIONS, "bottom"),
+        text_align=_pick(payload.text_align, TEXT_ALIGNS, "left"),
+        theme=_pick(payload.theme, THEMES, "dark"),
+    )
+
+    async def render(with_references: bool):
+        if with_references and references:
+            files = [
+                (f"reference{index}.{content_type.split('/')[-1]}", content, content_type)
+                for index, (content, content_type) in enumerate(references)
+            ]
+
+            return await client.images.edit(
+                model=IMAGE_MODEL,
+                image=files,
+                prompt=prompt,
+                size=IMAGE_SIZE,
+                n=1,
+            )
+
+        return await client.images.generate(
+            model=IMAGE_MODEL,
+            prompt=prompt,
+            size=IMAGE_SIZE,
+            n=1,
+        )
+
+    try:
+        result = await render(True)
+    except HTTPException:
+        raise
+    except Exception as error:
+        # 상세컷에 아기 사진 같은 게 섞여 있으면 안전 시스템이 결과물을 막는다.
+        # 그 카드만 통째로 실패하는 것보다 참조 없이 한 번 더 그려보는 편이 낫다.
+        if references and "moderation_blocked" in str(error):
+            try:
+                result = await render(False)
+            except Exception as retry_error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"카드 생성에 실패했습니다: {retry_error}",
+                ) from retry_error
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail=f"카드 생성에 실패했습니다: {error}",
+            ) from error
+
+    encoded = result.data[0].b64_json if result.data else None
+    if not encoded:
+        raise HTTPException(status_code=502, detail="이미지 응답이 비어 있습니다.")
+
+    return ImageResponse(
+        imageBase64=f"data:image/png;base64,{encoded}",
+        usedReference=bool(references),
     )

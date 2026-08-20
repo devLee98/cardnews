@@ -191,12 +191,16 @@ CARD_STAGES: list[CardStage] = [
             "events[].products[].discount_rate_derived",
         ],
         "optional": [
+            # 가격을 구성별로 보여주려면 어떤 구성인지 이름이 있어야 한다.
+            # (엑셀에는 없지만 가격만 나열하면 무엇의 가격인지 알 수 없다)
+            "events[].products[].option1",
+            "events[].products[].name",
             "events[].products[].detail_image_urls",
             "events[].products[].structured_specs",
         ],
         "purpose": (
             "데이터가 있으면 제품의 가격과 객관적인 정보 위주로 전달하는 카드로, "
-            "팩트 중심으로 어필한다."
+            "팩트 중심으로 어필한다. 구성별로 정가와 할인율, 공구가를 함께 보여준다."
         ),
         "constraint": (
             "structured_specs 값은 추론해서 만들어 내지 않는다. 데이터에 있는 값만 쓴다."
