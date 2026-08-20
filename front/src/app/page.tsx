@@ -3,12 +3,13 @@
 import { useMemo, useRef, useState } from "react";
 import { Download, FileJson, Sparkles, Upload } from "lucide-react";
 
-import { CardPlan, type CardPlanItem } from "@/components/card-plan";
+import { CardPlan } from "@/components/card-plan";
 import { DataPanel } from "@/components/data-panel";
 import { StepCard, type StepState } from "@/components/step-card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { analyzeData } from "@/lib/analyze-data";
+import { requestCardPlan, type CardPlanItem } from "@/lib/api";
 import type { JsonValue } from "@/lib/json";
 import { cn } from "@/lib/utils";
 
@@ -16,20 +17,50 @@ const MAX_INSTRUCTION = 500;
 
 export default function CardNewsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 업로드를 연달아 하면 늦게 온 응답이 최신 요청을 덮어쓸 수 있어 번호로 구분한다
+  const requestIdRef = useRef(0);
 
   const [data, setData] = useState<JsonValue | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState(0);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [planConfirmed, setPlanConfirmed] = useState(false);
-  const [instruction, setInstruction] = useState("");
 
-  // AI 연결 전이라 구성안은 아직 비어 있다. 연결되면 여기에 응답을 넣는다.
-  const [cardPlan] = useState<CardPlanItem[] | null>(null);
+  const [cardPlan, setCardPlan] = useState<CardPlanItem[] | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planConfirmed, setPlanConfirmed] = useState(false);
+
+  const [instruction, setInstruction] = useState("");
 
   const analysis = useMemo(() => (data ? analyzeData(data) : null), [data]);
   const hasData = data !== null;
+
+  async function generatePlan(source: JsonValue) {
+    const requestId = ++requestIdRef.current;
+
+    setPlanLoading(true);
+    setPlanError(null);
+    setCardPlan(null);
+    setPlanConfirmed(false);
+
+    try {
+      const result = await requestCardPlan(source);
+      if (requestId !== requestIdRef.current) return;
+
+      setCardPlan(result.cards);
+    } catch (error) {
+      if (requestId !== requestIdRef.current) return;
+
+      setPlanError(
+        error instanceof Error
+          ? error.message
+          : "구성안을 만드는 중 알 수 없는 오류가 발생했습니다.",
+      );
+    } finally {
+      if (requestId === requestIdRef.current) setPlanLoading(false);
+    }
+  }
 
   async function readFile(file: File) {
     setFileError(null);
@@ -41,17 +72,22 @@ export default function CardNewsPage() {
       return;
     }
 
-    try {
-      const parsed = JSON.parse(await file.text()) as JsonValue;
+    let parsed: JsonValue;
 
-      setData(parsed);
-      setFileName(file.name);
-      setFileSize(file.size);
-      setPlanConfirmed(false);
+    try {
+      parsed = JSON.parse(await file.text()) as JsonValue;
     } catch {
       // 이미 올려둔 데이터가 있으면 그대로 두고 실패만 알린다
       setFileError("파일이 손상되어 읽지 못했습니다. 확인 후 다시 올려주세요.");
+      return;
     }
+
+    setData(parsed);
+    setFileName(file.name);
+    setFileSize(file.size);
+
+    // 별도 지시 없이 바로 분석과 구성안 생성으로 넘어간다
+    void generatePlan(parsed);
   }
 
   const uploadState: StepState = hasData ? "done" : "active";
@@ -61,6 +97,15 @@ export default function CardNewsPage() {
       ? "done"
       : "active";
   const instructionState: StepState = planConfirmed ? "active" : "idle";
+
+  function planSubtitle() {
+    if (!hasData) return undefined;
+    if (planLoading) return "AI가 구성안을 짜는 중…";
+    if (planError) return "구성안 생성 실패";
+    if (planConfirmed) return "구성안 확인 완료";
+    if (cardPlan) return `${cardPlan.length}단 구성안 검토 중 →`;
+    return undefined;
+  }
 
   return (
     <div className="min-h-screen bg-muted/40">
@@ -133,15 +178,7 @@ export default function CardNewsPage() {
             num={2}
             title="카드 구성 확인"
             state={planState}
-            subtitle={
-              !hasData
-                ? undefined
-                : planConfirmed
-                  ? "구성안 확인 완료"
-                  : cardPlan
-                    ? `${cardPlan.length}단 구성안 검토 중 →`
-                    : "AI 구성안 대기 중"
-            }
+            subtitle={planSubtitle()}
           />
 
           {/* 3. 추가 인스트럭션 */}
@@ -166,8 +203,11 @@ export default function CardNewsPage() {
 
               <CardPlan
                 plan={cardPlan}
+                loading={planLoading}
+                error={planError}
                 confirmed={planConfirmed}
                 onConfirm={() => setPlanConfirmed(true)}
+                onRetry={() => void generatePlan(data)}
               />
 
               {/* 추가 인스트럭션 — 구성안을 확인해야 열린다 */}
