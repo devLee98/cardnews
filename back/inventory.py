@@ -10,6 +10,7 @@
   배열 인덱스는 [] 로 합쳐서 상품 15개가 한 줄로 모이게 한다.
 """
 
+import json
 from typing import Any
 
 MAX_SAMPLE_LENGTH = 80
@@ -145,3 +146,128 @@ def empty_paths(rows: list[dict[str, Any]]) -> list[str]:
     """나오는 자리마다 전부 비어 있는 경로."""
 
     return sorted(row["path"] for row in rows if row["filled"] == 0)
+
+
+# ────────────────────────────────────────────────
+# 문구를 쓰려면 '무엇이 있는지'가 아니라 '실제 값'이 필요하다.
+# 구성안이 카드마다 쓸 경로를 알려주므로, 그 경로의 값만 뽑아 쓴다.
+# ────────────────────────────────────────────────
+
+EXTRACT_MAX_ITEMS = 6
+EXTRACT_MAX_LENGTH = 600
+
+
+def _compact(value: Any, max_length: int, max_items: int) -> Any:
+    """프롬프트에 넣을 수 있게 긴 값을 잘라 낸다."""
+
+    if isinstance(value, str):
+        flat = " ".join(value.split())
+        return flat if len(flat) <= max_length else f"{flat[:max_length]}…"
+
+    if isinstance(value, list):
+        return [_compact(item, max_length, max_items) for item in value[:max_items]]
+
+    if isinstance(value, dict):
+        return {
+            key: _compact(child, max_length, max_items)
+            for key, child in value.items()
+            if not _is_empty(child)
+        }
+
+    return value
+
+
+def extract_values(
+    data: Any,
+    paths: list[str],
+    *,
+    max_items: int = EXTRACT_MAX_ITEMS,
+    max_length: int = EXTRACT_MAX_LENGTH,
+) -> dict[str, list[Any]]:
+    """주어진 경로들의 실제 값을 뽑는다. 경로마다 최대 max_items 개까지만."""
+
+    wanted = set(paths)
+    found: dict[str, list[Any]] = {}
+    seen: dict[str, set[str]] = {}
+
+    def walk(value: Any, path: str) -> None:
+        if isinstance(value, list):
+            for item in value:
+                walk(item, f"{path}[]")
+            return
+
+        if not isinstance(value, dict):
+            return
+
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else key
+
+            if child_path in wanted and not _is_empty(child):
+                bucket = found.setdefault(child_path, [])
+
+                if len(bucket) < max_items:
+                    compact = _compact(child, max_length, max_items)
+
+                    # 같은 값이 여러 상품에 반복되는 일이 흔하다.
+                    # 걸러내지 않으면 자리를 다 차지해서 뒤쪽 상품의 고유한 내용이 잘린다.
+                    marker = (
+                        compact
+                        if isinstance(compact, str)
+                        else json.dumps(compact, ensure_ascii=False, sort_keys=True)
+                    )
+                    known = seen.setdefault(child_path, set())
+
+                    if marker not in known:
+                        known.add(marker)
+                        bucket.append(compact)
+
+            walk(child, child_path)
+
+    walk(data, "")
+
+    return found
+
+
+# 받아 볼 만한 이미지 형식. gif 는 첫 프레임을 뽑아 쓰므로 함께 받는다.
+SUPPORTED_IMAGE = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+
+def find_image_urls(data: Any, paths: list[str], limit: int = 3) -> list[str]:
+    """구성안이 지목한 경로에서 참조로 쓸 상품 사진 URL 을 뽑는다.
+
+    대표 사진(image_url)이 먼저 나오고, 그다음 상세 이미지(detail_image_urls)가 붙는다.
+    상세 이미지는 브랜드가 실제로 찍은 연출컷이라 배경 분위기를 잡는 데 도움이 된다.
+    """
+
+    urls: list[str] = []
+
+    # 대표 사진을 먼저 채우기 위해 경로를 두 번 훑는다
+    for wanted_detail in (False, True):
+        for path, values in extract_values(
+            data, paths, max_items=limit * 2, max_length=2000
+        ).items():
+            is_detail = "detail_image_urls" in path
+
+            if is_detail != wanted_detail:
+                continue
+            if not ("image_url" in path or "image_urls" in path):
+                continue
+
+            for value in values:
+                candidates = value if isinstance(value, list) else [value]
+
+                for candidate in candidates:
+                    if not isinstance(candidate, str):
+                        continue
+                    if not candidate.startswith("http"):
+                        continue
+                    if not candidate.lower().split("?")[0].endswith(SUPPORTED_IMAGE):
+                        continue
+
+                    if candidate not in urls:
+                        urls.append(candidate)
+
+                    if len(urls) >= limit:
+                        return urls
+
+    return urls
