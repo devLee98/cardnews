@@ -55,10 +55,14 @@ CARD_STAGES: list[CardStage] = [
         "required": [
             "events[].event_name",
             "events[].curator.nickname",
-            "events[].curator.profile_image_url",
             "events[].products[].name",
         ],
         "optional": [
+            # 프로필 이미지는 필수에서 뺐다.
+            # 필수로 두면 이 값 하나가 비어 있을 때 AI 가 표지 카드를 통째로 뺀다.
+            # ("필수 데이터가 비어 있는 단계는 넣지 않는다" 규칙을 그대로 따른 결과다)
+            # 공구명·큐레이터 이름·제품명만 있으면 표지는 만들 수 있다.
+            "events[].curator.profile_image_url",
             "events[].is_preorder",
             "events[].brand.name",
             "events[].brand.tagline",
