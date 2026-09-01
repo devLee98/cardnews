@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Image from "next/image";
 import { Download, FileJson, Sparkles, Upload } from "lucide-react";
 
 import {
@@ -317,10 +318,17 @@ export default function CardNewsPage() {
       {/* ── 헤더 ── */}
       <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-6">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Sparkles className="size-4" />
-          </div>
-          <span className="text-sm font-semibold">큐닷 카드뉴스</span>
+          {/* 로고 원본이 327x84 라 그 비율(3.89:1)을 지켜 높이 22px 로 줄인다 */}
+          <Image
+            src="/logo.png"
+            alt="Quedot"
+            width={86}
+            height={22}
+            priority
+          />
+          <span className="text-sm font-semibold text-muted-foreground">
+            카드뉴스
+          </span>
 
           <Button
             variant="outline"
