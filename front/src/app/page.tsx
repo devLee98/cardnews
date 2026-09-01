@@ -66,20 +66,31 @@ export default function CardNewsPage() {
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  // 문구부터 이미지까지 전 과정이 끝날 때까지 참이다.
+  // draftLoading 은 문구 단계에서만 참이라 버튼 상태로는 부족하다.
+  const [generating, setGenerating] = useState(false);
+
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
 
   const hasFile = source !== null;
   const hasData = data !== null;
   // 다 만들어지기를 기다릴 필요는 없다. 한 장이라도 완성됐으면 내보낼 수 있다.
-  const exportable = Boolean(
-    drafts?.some((card) => card.imageStatus === "ready" && card.image),
-  );
+  // 아직 만들어지는 중인 카드가 하나도 없고, 내려받을 것이 있을 때만 연다.
+  // 한 장이 실패했다고 나머지까지 못 받게 하지는 않는다.
+  const pendingCards =
+    drafts?.filter((card) => card.imageStatus === "loading").length ?? 0;
+  const readyCards =
+    drafts?.filter((card) => card.imageStatus === "ready" && card.image).length ??
+    0;
+  const exportable = pendingCards === 0 && readyCards > 0;
 
   /** AI 생성하기: 문구를 한 번에 받고, 배경은 카드마다 따로 받아 채워 넣는다. */
   async function handleGenerate() {
     if (!data || !cardPlan) return;
 
+    // 문구부터 이미지까지 전부 끝나야 내려간다. 버튼도 그동안 잠긴다.
+    setGenerating(true);
     setDraftLoading(true);
     setDraftError(null);
     setDrafts(null);
@@ -110,6 +121,7 @@ export default function CardNewsPage() {
       setDraftError(
         error instanceof Error ? error.message : "문구 생성에 실패했습니다.",
       );
+      setGenerating(false);
       return;
     } finally {
       setDraftLoading(false);
@@ -118,20 +130,24 @@ export default function CardNewsPage() {
     // 문구가 먼저 화면에 뜨고, 카드는 만들어지는 대로 한 장씩 채워진다
     const pending = cards.filter((card) => !card.animatedUrl);
 
-    await runWithLimit(pending, IMAGE_CONCURRENCY, async (card) => {
-      const index = cards.indexOf(card);
+    try {
+      await runWithLimit(pending, IMAGE_CONCURRENCY, async (card) => {
+        const index = cards.indexOf(card);
 
-      try {
-        const image = await requestCardImage(data, card);
-        patchDraft(index, { image: image.imageBase64, imageStatus: "ready" });
-      } catch (error) {
-        patchDraft(index, {
-          imageStatus: "error",
-          imageError:
-            error instanceof Error ? error.message : "이미지 생성 실패",
-        });
-      }
-    });
+        try {
+          const image = await requestCardImage(data, card);
+          patchDraft(index, { image: image.imageBase64, imageStatus: "ready" });
+        } catch (error) {
+          patchDraft(index, {
+            imageStatus: "error",
+            imageError:
+              error instanceof Error ? error.message : "이미지 생성 실패",
+          });
+        }
+      });
+    } finally {
+      setGenerating(false);
+    }
   }
 
   /** 완성된 카드를 한 장씩 파일로 내려받는다. */
@@ -336,6 +352,11 @@ export default function CardNewsPage() {
             className="ml-auto"
             disabled={!exportable || exporting}
             onClick={handleExport}
+            title={
+              pendingCards > 0
+                ? `카드 ${pendingCards}장이 아직 만들어지는 중입니다`
+                : undefined
+            }
           >
             <Download className={cn(exporting && "animate-pulse")} />
             {exporting ? "내보내는 중…" : "내보내기"}
@@ -344,8 +365,12 @@ export default function CardNewsPage() {
       </header>
 
       <main className="mx-auto grid max-w-[1400px] grid-cols-1 items-start gap-6 p-6 lg:grid-cols-[360px_1fr]">
-        {/* ── 좌측 단계 메뉴 ── */}
-        <aside className="flex flex-col gap-3">
+        {/* ── 좌측 단계 메뉴 ──
+            넓은 화면에서는 화면에 붙여 둔다. 오른쪽 결과가 길어서 스크롤을 내리면
+            지금 몇 단계인지와 생성 버튼이 화면 밖으로 사라지기 때문이다.
+            top-20 = 헤더 높이(3.5rem) + 본문 여백(1.5rem).
+            창이 낮아 메뉴가 다 안 들어가면 그때만 메뉴 안에서 스크롤된다. */}
+        <aside className="flex flex-col gap-3 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto">
           {/* 1. 공구 데이터 업로드 */}
           <div
             onDragOver={(event) => {
@@ -360,7 +385,7 @@ export default function CardNewsPage() {
               const file = event.dataTransfer.files[0];
               if (file) void readFile(file);
             }}
-            className={cn("rounded-xl", dragging && "ring-2 ring-amber-500/60")}
+            className={cn("rounded-xl", dragging && "ring-2 ring-primary")}
           >
             <StepCard
               num={1}
@@ -419,11 +444,11 @@ export default function CardNewsPage() {
           <Button
             size="lg"
             className="mt-1 w-full"
-            disabled={!cardPlan || draftLoading}
+            disabled={!cardPlan || generating}
             onClick={handleGenerate}
           >
-            <Sparkles className={cn(draftLoading && "animate-pulse")} />
-            {draftLoading ? "문구 생성 중…" : "AI 생성하기"}
+            <Sparkles className={cn(generating && "animate-pulse")} />
+            {generating ? "AI 카드뉴스 생성중…" : "AI 생성하기"}
           </Button>
         </aside>
 
