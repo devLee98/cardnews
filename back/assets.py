@@ -12,6 +12,7 @@ URL 이름만 봐서는 구분이 안 되므로, 실제로 받아서 크기를 �
 
 import asyncio
 import base64
+import hashlib
 import io
 from typing import Any
 
@@ -33,10 +34,16 @@ DOWNLOAD_TIMEOUT = 20
 
 
 class Candidate:
-    __slots__ = ("url", "width", "height", "animated", "preview")
+    __slots__ = ("url", "width", "height", "animated", "preview", "digest")
 
     def __init__(
-        self, url: str, width: int, height: int, animated: bool, preview: str
+        self,
+        url: str,
+        width: int,
+        height: int,
+        animated: bool,
+        preview: str,
+        digest: str,
     ) -> None:
         self.url = url
         self.width = width
@@ -44,6 +51,8 @@ class Candidate:
         self.animated = animated
         #: 비전 모델에 보낼 첫 프레임 (data URL). gif 도 여기서는 정지 이미지가 된다.
         self.preview = preview
+        #: 내려받은 파일 자체의 해시. 같은 사진이 다른 이름으로 올라온 것을 잡는다.
+        self.digest = digest
 
     @property
     def ratio(self) -> float:
@@ -102,6 +111,7 @@ def _inspect(url: str, raw: bytes) -> Candidate | None:
             height=height,
             animated=animated,
             preview=f"data:image/jpeg;base64,{encoded}",
+            digest=hashlib.sha256(raw).hexdigest(),
         )
     except Exception:
         return None
@@ -133,7 +143,19 @@ async def gather_candidates(data: Any) -> list[Candidate]:
 
         results = await asyncio.gather(*(fetch(url) for url in urls))
 
-    found = [item for item in results if item]
+    # URL 이 다르면 다른 이미지로 보고 여기까지 온다. 하지만 브랜드가 같은 사진을
+    # 상품마다 다른 이름으로 올리거나 CDN 파라미터만 바꿔 두는 일이 흔해서,
+    # 화면에 같은 후기 움짤이 여러 장 뜬다.
+    # 파일을 이미 받아 뒀으니 내용으로 한 번 더 거른다. 먼저 나온 쪽을 남긴다.
+    found: list[Candidate] = []
+    seen: set[str] = set()
+
+    for item in results:
+        if not item or item.digest in seen:
+            continue
+
+        seen.add(item.digest)
+        found.append(item)
 
     # 앞에서부터 자르면 문서 앞쪽 상품(주방세제)의 이미지만 남고
     # 뒤쪽 상품(핸드워시, 욕조클리너)의 움짤이 통째로 사라진다.
