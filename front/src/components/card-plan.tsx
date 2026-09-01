@@ -20,7 +20,7 @@ export function CardPlan({
   onRetry: () => void;
 }) {
   return (
-    <section className="rounded-xl border border-amber-500/60 bg-card pb-5">
+    <section className="rounded-xl border border-primary/60 bg-card pb-5">
       <div className="flex items-center gap-3 px-5 pt-5">
         <h2 className="text-sm font-semibold">
           AI가 제안한 카드 구성안
@@ -32,7 +32,7 @@ export function CardPlan({
       </div>
 
       {loading ? (
-        <Notice icon={<Loader2 className="size-5 animate-spin" />}>
+        <Notice icon={<Loader2 className="size-5 animate-spin text-primary" />}>
           AI가 데이터를 읽고 구성안을 짜고 있습니다
         </Notice>
       ) : error ? (
@@ -58,7 +58,7 @@ export function CardPlan({
                 key={`${index}-${item.section}`}
                 className="flex items-center gap-4 rounded-lg border border-dashed px-4 py-3"
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full border text-xs">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-accent text-xs font-medium text-primary">
                   {index + 1}
                 </span>
                 <span className="w-24 shrink-0 text-sm font-medium">

@@ -28,7 +28,7 @@ export function CardDraftSkeleton({ count }: { count: number }) {
       <div className="flex items-center gap-3 px-5 pt-5">
         <h2 className="text-sm font-semibold">카드뉴스 초안 · {count}장</h2>
         <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" />
+          <Loader2 className="size-3.5 animate-spin text-primary" />
           AI가 카드 문구를 쓰는 중
         </span>
       </div>
