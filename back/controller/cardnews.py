@@ -39,13 +39,43 @@ router = APIRouter(
 
 TEXT_MODEL = os.getenv("OPENAI_TEXT_MODEL", "gpt-5")
 
-# gpt-5 계열은 추론에 시간을 많이 쓴다. 기본값(medium)으로 두면 한 번에 50초를 넘겨
-# 배포 환경의 nginx 기본 타임아웃(60초)에 걸린다.
-# low 로 두면 17초 안팎이고 고르는 단계는 거의 같다.
+# gpt-5 계열은 답하기 전에 스스로 생각하는 시간을 갖는다. 그 시간을 조절하는 값이다.
 # 추론 모델이 아닌 모델(gpt-4.1 등)을 쓸 때는 빈 값으로 두어 옵션을 빼야 한다.
+#
+# 구성안 고르기와 사진 분류는 생각을 오래 시켜도 결과가 거의 같아서 low 로 둔다.
+# (medium 은 한 번에 50초를 넘긴다. 배포 nginx 응답 제한은 120초다)
 REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip()
 
+# 문구 쓰기만 따로 올린다.
+#
+# 카드 8장을 한 번에 쓰면서 서로 말이 겹치지 않게 하고, 22/60자를 지키고,
+# 가격 세 종류(정가·공구가·타채널 최저가)를 헷갈리지 않아야 한다.
+# 세 호출 중 생각이 실제로 필요한 곳은 여기뿐이라, 여기만 medium 을 준다.
+# 전부 올리면 사진 분류까지 같이 느려져서 기다리는 시간만 늘어난다.
+DRAFT_REASONING_EFFORT = os.getenv(
+    "OPENAI_DRAFT_REASONING_EFFORT", "medium"
+).strip()
+
 IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+
+# 카드에 글자를 직접 그려 넣기 때문에 화질이 곧 글자 선명도다.
+# 빈 값으로 두면 옵션을 빼고 부른다 (모델이 알아서 판단).
+#
+# high 로 올려 봤더니 한 장당 시간이 눈에 띄게 늘어 카드 8장 전체가 두 배 가까이
+# 걸렸다. 화질 차이는 그만큼 크지 않아서 기본값으로 되돌렸다.
+# 배포 nginx 응답 제한이 120초라, 올릴 생각이면 한 장당 시간을 먼저 재야 한다.
+IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY", "").strip()
+
+# 참조로 넣은 브랜드 실사를 얼마나 그대로 따라갈지.
+#
+# ⚠️ gpt-image-1 계열 전용이다. gpt-image-2 에 넘기면 400 으로 카드가 통째로 실패한다.
+#      "The model 'gpt-image-2' does not support the 'input_fidelity' parameter."
+#    그래서 기본값은 꺼 둔다. gpt-image-1 로 내릴 때만 켠다.
+INPUT_FIDELITY = os.getenv("OPENAI_INPUT_FIDELITY", "").strip()
+
+# 화면에서 그대로 내려받을 수 있게 png 로 고정한다.
+# 응답을 data:image/png 로 감싸 돌려주므로 이 값과 어긋나면 안 된다.
+IMAGE_FORMAT = "png"
 
 #: 이미지 생성에 참조로 넣을 수 있는 유일한 경로
 REFERENCE_PATH = "events[].products[].detail_image_urls"
@@ -405,9 +435,10 @@ async def create_draft(payload: DraftRequest):
 
     client = _client()
 
+    # 문구 쓰기만 생각을 더 시킨다. 다른 두 호출과 값이 다르다.
     options: dict[str, Any] = {}
-    if REASONING_EFFORT:
-        options["reasoning_effort"] = REASONING_EFFORT
+    if DRAFT_REASONING_EFFORT:
+        options["reasoning_effort"] = DRAFT_REASONING_EFFORT
 
     try:
         completion = await client.chat.completions.create(
@@ -653,6 +684,10 @@ async def create_image(payload: ImageRequest):
         theme=_pick(payload.theme, THEMES, "dark"),
     )
 
+    options: dict[str, Any] = {"output_format": IMAGE_FORMAT}
+    if IMAGE_QUALITY:
+        options["quality"] = IMAGE_QUALITY
+
     async def render(with_references: bool):
         if with_references and references:
             files = [
@@ -660,12 +695,17 @@ async def create_image(payload: ImageRequest):
                 for index, (content, content_type) in enumerate(references)
             ]
 
+            edit_options = dict(options)
+            if INPUT_FIDELITY:
+                edit_options["input_fidelity"] = INPUT_FIDELITY
+
             return await client.images.edit(
                 model=IMAGE_MODEL,
                 image=files,
                 prompt=prompt,
                 size=IMAGE_SIZE,
                 n=1,
+                **edit_options,
             )
 
         return await client.images.generate(
@@ -673,6 +713,7 @@ async def create_image(payload: ImageRequest):
             prompt=prompt,
             size=IMAGE_SIZE,
             n=1,
+            **options,
         )
 
     try:
@@ -701,6 +742,6 @@ async def create_image(payload: ImageRequest):
         raise HTTPException(status_code=502, detail="이미지 응답이 비어 있습니다.")
 
     return ImageResponse(
-        imageBase64=f"data:image/png;base64,{encoded}",
+        imageBase64=f"data:image/{IMAGE_FORMAT};base64,{encoded}",
         usedReference=bool(references),
     )
