@@ -387,6 +387,7 @@ def build_image_prompt(
     text_position: str = "bottom",
     text_align: str = "left",
     theme: str = "dark",
+    avatar_corner: str | None = None,
 ) -> str:
     """카드 한 장을 통째로 만드는 프롬프트.
 
@@ -497,6 +498,16 @@ def build_image_prompt(
         "  글자의 위아래나 좌우가 화면 밖으로 잘려 나가면 안 된다.",
         "  특히 첫 줄 위와 마지막 줄 아래에 여백을 확실히 남긴다.",
     ]
+
+    # 큐레이터 얼굴은 실제 사진이라 모델이 그릴 수 없다.
+    # 다 그려진 뒤에 코드가 얹으므로, 그 자리를 미리 비워 달라고 부탁한다.
+    if avatar_corner:
+        lines += [
+            f"- {avatar_corner} 모서리의 정사각형 영역(카드 너비의 1/4 정도)은 비워 둔다.",
+            "  그 자리에 나중에 동그란 인물 사진이 얹힌다.",
+            "  글자나 제품의 중요한 부분을 그 자리에 두지 않는다.",
+            "  배경은 이어지되 단순하게 정리한다.",
+        ]
 
     lines += [
         "",
