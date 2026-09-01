@@ -135,7 +135,7 @@ export default function CardNewsPage() {
         const index = cards.indexOf(card);
 
         try {
-          const image = await requestCardImage(data, card);
+          const image = await requestCardImage(data, card, instruction);
           patchDraft(index, { image: image.imageBase64, imageStatus: "ready" });
         } catch (error) {
           patchDraft(index, {

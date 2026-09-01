@@ -612,6 +612,8 @@ class ImageRequest(BaseModel):
     text_position: str = Field(default="bottom", alias="textPosition")
     text_align: str = Field(default="left", alias="textAlign")
     theme: str = "dark"
+    #: 문구 단계와 같은 지시문. 여기서는 장면에 관한 부분만 읽는다.
+    instruction: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -761,6 +763,7 @@ async def create_image(payload: ImageRequest):
         text_align=_pick(payload.text_align, TEXT_ALIGNS, "left"),
         theme=_pick(payload.theme, THEMES, "dark"),
         avatar_corner=corner,
+        instruction=payload.instruction,
     )
 
     options: dict[str, Any] = {"output_format": IMAGE_FORMAT}
