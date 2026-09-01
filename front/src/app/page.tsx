@@ -9,11 +9,12 @@ import {
   type DraftCard,
 } from "@/components/card-draft";
 import { CardPlan } from "@/components/card-plan";
+import { EventPicker } from "@/components/event-picker";
 import { GifPicker } from "@/components/gif-picker";
 import { DataPanel } from "@/components/data-panel";
+import { InstructionBox } from "@/components/instruction-box";
 import { StepCard, type StepState } from "@/components/step-card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   requestCardAssets,
   requestCardDraft,
@@ -23,19 +24,26 @@ import {
   type CardAsset,
   type CardPlanItem,
 } from "@/lib/api";
+import { downloadCards } from "@/lib/download";
+import { pickEvent, readEvents, type EventOption } from "@/lib/events";
 import type { JsonValue } from "@/lib/json";
 import { cn } from "@/lib/utils";
 
 /** 배경 이미지를 동시에 몇 개까지 만들지 */
 const IMAGE_CONCURRENCY = 3;
 
-const MAX_INSTRUCTION = 500;
-
 export default function CardNewsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // 업로드를 연달아 하면 늦게 온 응답이 최신 요청을 덮어쓸 수 있어 번호로 구분한다
-  const requestIdRef = useRef(0);
+  // 공구를 연달아 바꾸면 늦게 온 응답이 최신 요청을 덮어쓸 수 있어 번호로 구분한다.
+  // 구성안과 상세 이미지는 따로 다시 부를 수 있어 번호도 따로 센다.
+  const planIdRef = useRef(0);
+  const assetIdRef = useRef(0);
 
+  // 업로드한 파일 원본. 공구가 여러 건 들어 있을 수 있다.
+  const [source, setSource] = useState<JsonValue | null>(null);
+  const [events, setEvents] = useState<EventOption[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<number | null>(null);
+  // 고른 공구 한 건만 남긴 데이터. 서버로 나가는 것은 항상 이쪽이다.
   const [data, setData] = useState<JsonValue | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState(0);
@@ -57,7 +65,15 @@ export default function CardNewsPage() {
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
+
+  const hasFile = source !== null;
   const hasData = data !== null;
+  // 다 만들어지기를 기다릴 필요는 없다. 한 장이라도 완성됐으면 내보낼 수 있다.
+  const exportable = Boolean(
+    drafts?.some((card) => card.imageStatus === "ready" && card.image),
+  );
 
   /** AI 생성하기: 문구를 한 번에 받고, 배경은 카드마다 따로 받아 채워 넣는다. */
   async function handleGenerate() {
@@ -66,6 +82,7 @@ export default function CardNewsPage() {
     setDraftLoading(true);
     setDraftError(null);
     setDrafts(null);
+    setExportNote(null);
 
     let cards: DraftCard[];
 
@@ -116,6 +133,26 @@ export default function CardNewsPage() {
     });
   }
 
+  /** 완성된 카드를 한 장씩 파일로 내려받는다. */
+  async function handleExport() {
+    if (!drafts) return;
+
+    setExporting(true);
+    setExportNote(null);
+
+    try {
+      const { saved, failed, skipped } = await downloadCards(drafts);
+
+      const notes = [`${saved}장 저장`];
+      if (skipped) notes.push(`${skipped}장은 아직 안 만들어져 건너뜀`);
+      if (failed.length) notes.push(`받지 못한 카드: ${failed.join(", ")}`);
+
+      setExportNote(notes.join(" · "));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function patchDraft(index: number, patch: Partial<DraftCard>) {
     setDrafts((prev) =>
       prev
@@ -124,20 +161,20 @@ export default function CardNewsPage() {
     );
   }
 
-  async function generatePlan(source: JsonValue) {
-    const requestId = ++requestIdRef.current;
+  async function generatePlan(picked: JsonValue) {
+    const requestId = ++planIdRef.current;
 
     setPlanLoading(true);
     setPlanError(null);
     setCardPlan(null);
 
     try {
-      const result = await requestCardPlan(source);
-      if (requestId !== requestIdRef.current) return;
+      const result = await requestCardPlan(picked);
+      if (requestId !== planIdRef.current) return;
 
       setCardPlan(result.cards);
     } catch (error) {
-      if (requestId !== requestIdRef.current) return;
+      if (requestId !== planIdRef.current) return;
 
       setPlanError(
         error instanceof Error
@@ -145,8 +182,75 @@ export default function CardNewsPage() {
           : "구성안을 만드는 중 알 수 없는 오류가 발생했습니다.",
       );
     } finally {
-      if (requestId === requestIdRef.current) setPlanLoading(false);
+      if (requestId === planIdRef.current) setPlanLoading(false);
     }
+  }
+
+  async function loadAssets(picked: JsonValue) {
+    const requestId = ++assetIdRef.current;
+
+    setAssets([]);
+    setPickedGifs([]);
+    setAssetsError(null);
+    setAssetsLoading(true);
+
+    try {
+      const result = await requestCardAssets(picked);
+      if (requestId !== assetIdRef.current) return;
+
+      setAssets(result.images);
+    } catch (error) {
+      if (requestId !== assetIdRef.current) return;
+
+      setAssetsError(
+        error instanceof Error
+          ? error.message
+          : "상세 이미지를 불러오지 못했습니다.",
+      );
+    } finally {
+      if (requestId === assetIdRef.current) setAssetsLoading(false);
+    }
+  }
+
+  /**
+   * 공구를 고른다. 고른 공구 한 건만 남긴 데이터로 분석을 다시 시작한다.
+   * 구성안과 상세 이미지 살펴보기는 서로 기다릴 필요가 없어 나란히 돌린다.
+   */
+  function selectEvent(root: JsonValue, index: number) {
+    const picked = pickEvent(root, index);
+
+    setSelectedEvent(index);
+    setData(picked);
+
+    // 앞서 고른 공구로 만든 카드는 더 이상 맞지 않으므로 비운다
+    setDrafts(null);
+    setDraftError(null);
+
+    void generatePlan(picked);
+    void loadAssets(picked);
+  }
+
+  /** 새 파일을 올리면 이전 파일로 만든 것은 모두 버린다. */
+  function clearResults() {
+    // 아직 돌아오지 않은 응답이 새 화면을 덮어쓰지 않도록 번호를 넘긴다
+    planIdRef.current += 1;
+    assetIdRef.current += 1;
+
+    setSelectedEvent(null);
+    setData(null);
+
+    setCardPlan(null);
+    setPlanLoading(false);
+    setPlanError(null);
+
+    setAssets([]);
+    setPickedGifs([]);
+    setAssetsLoading(false);
+    setAssetsError(null);
+
+    setDrafts(null);
+    setDraftError(null);
+    setExportNote(null);
   }
 
   async function readFile(file: File) {
@@ -169,33 +273,36 @@ export default function CardNewsPage() {
       return;
     }
 
-    setData(parsed);
+    const list = readEvents(parsed);
+
+    // 공구가 하나도 없으면 뒤 단계가 전부 빈손이 된다. 여기서 끊는다.
+    if (list.length === 0) {
+      setFileError(
+        "공구(events) 데이터를 찾지 못했습니다. 파일 구조를 확인 후 다시 올려주세요.",
+      );
+      return;
+    }
+
+    clearResults();
+    setSource(parsed);
+    setEvents(list);
     setFileName(file.name);
     setFileSize(file.size);
 
-    // 별도 지시 없이 바로 분석과 구성안 생성으로 넘어간다.
-    // 상세 이미지 살펴보기는 구성안과 서로 기다릴 필요가 없어 나란히 돌린다.
-    setAssets([]);
-    setPickedGifs([]);
-    setAssetsError(null);
-    setAssetsLoading(true);
-
-    void generatePlan(parsed);
-    void requestCardAssets(parsed)
-      .then((result) => setAssets(result.images))
-      .catch((error) =>
-        setAssetsError(
-          error instanceof Error
-            ? error.message
-            : "상세 이미지를 불러오지 못했습니다.",
-        ),
-      )
-      .finally(() => setAssetsLoading(false));
+    // 공구가 한 건뿐이면 고를 것이 없으므로 바로 분석으로 넘어간다
+    if (list.length === 1) selectEvent(parsed, 0);
   }
 
-  const uploadState: StepState = hasData ? "done" : "active";
+  const uploadState: StepState = hasFile ? "done" : "active";
+  const eventState: StepState = !hasFile ? "idle" : hasData ? "done" : "active";
   const planState: StepState = !hasData ? "idle" : cardPlan ? "done" : "active";
   const instructionState: StepState = cardPlan ? "active" : "idle";
+
+  function eventSubtitle() {
+    if (!hasFile) return undefined;
+    if (selectedEvent !== null) return events[selectedEvent]?.name;
+    return `공구 ${events.length}건 · 만들 공구를 골라주세요`;
+  }
 
   function planSubtitle() {
     if (!hasData) return undefined;
@@ -215,9 +322,15 @@ export default function CardNewsPage() {
           </div>
           <span className="text-sm font-semibold">큐닷 카드뉴스</span>
 
-          <Button variant="outline" size="sm" disabled className="ml-auto">
-            <Download />
-            내보내기
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto"
+            disabled={!exportable || exporting}
+            onClick={handleExport}
+          >
+            <Download className={cn(exporting && "animate-pulse")} />
+            {exporting ? "내보내는 중…" : "내보내기"}
           </Button>
         </div>
       </header>
@@ -246,13 +359,13 @@ export default function CardNewsPage() {
               title="공구 데이터 업로드"
               state={uploadState}
               subtitle={
-                hasData
+                hasFile
                   ? `${fileName} · ${Math.max(1, Math.round(fileSize / 1024))}KB`
                   : "JSON 파일을 끌어다 놓거나 눌러서 선택"
               }
-              action={hasData ? "다시 올리기" : undefined}
+              action={hasFile ? "다시 올리기" : undefined}
               onAction={() => fileInputRef.current?.click()}
-              onClick={hasData ? undefined : () => fileInputRef.current?.click()}
+              onClick={hasFile ? undefined : () => fileInputRef.current?.click()}
             />
           </div>
 
@@ -271,17 +384,25 @@ export default function CardNewsPage() {
             <p className="px-1 text-xs text-destructive">{fileError}</p>
           )}
 
-          {/* 2. 카드 구성 확인 */}
+          {/* 2. 공구 선택 — 한 파일에 공구가 여러 건 들어 있다 */}
           <StepCard
             num={2}
+            title="공구 선택"
+            state={eventState}
+            subtitle={eventSubtitle()}
+          />
+
+          {/* 3. 카드 구성 확인 */}
+          <StepCard
+            num={3}
             title="카드 구성 확인"
             state={planState}
             subtitle={planSubtitle()}
           />
 
-          {/* 3. 추가 인스트럭션 */}
+          {/* 4. 추가 인스트럭션 */}
           <StepCard
-            num={3}
+            num={4}
             title="추가 인스트럭션"
             state={instructionState}
             subtitle="(선택)"
@@ -300,57 +421,64 @@ export default function CardNewsPage() {
 
         {/* ── 우측 결과 영역 ── */}
         <section>
-          {data ? (
+          {source ? (
             <div className="flex flex-col gap-5">
-              <DataPanel data={data} onChange={setData} />
+              {/* 공구가 여러 건일 때만 고르는 화면을 둔다 */}
+              {events.length > 1 && (
+                <EventPicker
+                  events={events}
+                  selected={selectedEvent}
+                  onSelect={(index) => selectEvent(source, index)}
+                />
+              )}
 
-              <CardPlan
-                plan={cardPlan}
-                loading={planLoading}
-                error={planError}
-                onRetry={() => void generatePlan(data)}
-              />
+              {data ? (
+                <>
+                  <DataPanel data={data} onChange={setData} />
 
-              <GifPicker
-                gifs={assets.filter((asset) => asset.animated)}
-                selected={pickedGifs}
-                onChange={setPickedGifs}
-                loading={assetsLoading}
-                error={assetsError}
-              />
-
-              {/* 추가 인스트럭션 — 구성안을 확인해야 열린다 */}
-              <section className="rounded-xl border bg-card">
-                <div className="flex items-center gap-3 px-5 pt-5">
-                  <h2 className="text-sm font-semibold">추가 인스트럭션</h2>
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    선택 입력
-                  </span>
-                </div>
-
-                <div className="px-5 pt-4 pb-5">
-                  <Textarea
-                    value={instruction}
-                    maxLength={MAX_INSTRUCTION}
-                    onChange={(event) => setInstruction(event.target.value)}
-                    placeholder="추가로 참고했으면 하는 내용을 적어주세요"
-                    className="min-h-[100px] resize-none"
+                  <CardPlan
+                    plan={cardPlan}
+                    loading={planLoading}
+                    error={planError}
+                    onRetry={() => void generatePlan(data)}
                   />
-                  <p className="mt-1.5 text-right text-xs text-muted-foreground">
-                    {instruction.length} / {MAX_INSTRUCTION}
-                  </p>
-                </div>
-              </section>
 
-              {/* 카드 초안 */}
-              {drafts ? (
-                <CardDraftGrid cards={drafts} />
-              ) : draftLoading && cardPlan ? (
-                // 몇 장을 만들지는 구성안에 이미 정해져 있다. 그 수만큼 자리를 깔아 둔다.
-                <CardDraftSkeleton count={cardPlan.length} />
+                  <GifPicker
+                    gifs={assets.filter((asset) => asset.animated)}
+                    selected={pickedGifs}
+                    onChange={setPickedGifs}
+                    loading={assetsLoading}
+                    error={assetsError}
+                  />
+
+                  {/* 추가 인스트럭션 — 구성안을 확인한 뒤에 적는다 */}
+                  <InstructionBox
+                    value={instruction}
+                    onChange={setInstruction}
+                  />
+
+                  {/* 카드 초안 */}
+                  {drafts ? (
+                    <div className="flex flex-col gap-2">
+                      {exportNote && (
+                        <p className="px-1 text-xs text-muted-foreground">
+                          {exportNote}
+                        </p>
+                      )}
+                      <CardDraftGrid cards={drafts} />
+                    </div>
+                  ) : draftLoading && cardPlan ? (
+                    // 몇 장을 만들지는 구성안에 이미 정해져 있다. 그 수만큼 자리를 깔아 둔다.
+                    <CardDraftSkeleton count={cardPlan.length} />
+                  ) : (
+                    <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">
+                      {draftError ?? "생성하면 이 자리에 카드가 표시됩니다"}
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">
-                  {draftError ?? "생성하면 이 자리에 카드가 표시됩니다"}
+                <div className="rounded-xl border border-dashed px-5 py-16 text-center text-sm text-muted-foreground">
+                  위에서 카드뉴스를 만들 공구를 골라주세요
                 </div>
               )}
             </div>
