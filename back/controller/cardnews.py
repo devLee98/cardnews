@@ -1,12 +1,17 @@
+import base64
+import io
 import json
 import os
 import random
 from typing import Any
 
+from PIL import Image
+
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+import avatar
 from assets import gather_candidates, to_supported
 from card_spec import CARD_STAGES, MAX_CARDS
 from inventory import (
@@ -39,19 +44,56 @@ router = APIRouter(
 
 TEXT_MODEL = os.getenv("OPENAI_TEXT_MODEL", "gpt-5")
 
-# gpt-5 계열은 추론에 시간을 많이 쓴다. 기본값(medium)으로 두면 한 번에 50초를 넘겨
-# 배포 환경의 nginx 기본 타임아웃(60초)에 걸린다.
-# low 로 두면 17초 안팎이고 고르는 단계는 거의 같다.
+# gpt-5 계열은 답하기 전에 스스로 생각하는 시간을 갖는다. 그 시간을 조절하는 값이다.
 # 추론 모델이 아닌 모델(gpt-4.1 등)을 쓸 때는 빈 값으로 두어 옵션을 빼야 한다.
+#
+# 구성안 고르기와 사진 분류는 생각을 오래 시켜도 결과가 거의 같아서 low 로 둔다.
+# (medium 은 한 번에 50초를 넘긴다. 배포 nginx 응답 제한은 120초다)
 REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip()
 
+# 문구 쓰기만 따로 올린다.
+#
+# 카드 8장을 한 번에 쓰면서 서로 말이 겹치지 않게 하고, 22/60자를 지키고,
+# 가격 세 종류(정가·공구가·타채널 최저가)를 헷갈리지 않아야 한다.
+# 세 호출 중 생각이 실제로 필요한 곳은 여기뿐이라, 여기만 medium 을 준다.
+# 전부 올리면 사진 분류까지 같이 느려져서 기다리는 시간만 늘어난다.
+DRAFT_REASONING_EFFORT = os.getenv(
+    "OPENAI_DRAFT_REASONING_EFFORT", "medium"
+).strip()
+
 IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+
+# 카드에 글자를 직접 그려 넣기 때문에 화질이 곧 글자 선명도다.
+# 빈 값으로 두면 옵션을 빼고 부른다 (모델이 알아서 판단).
+#
+# high 로 올려 봤더니 한 장당 시간이 눈에 띄게 늘어 카드 8장 전체가 두 배 가까이
+# 걸렸다. 화질 차이는 그만큼 크지 않아서 기본값으로 되돌렸다.
+# 배포 nginx 응답 제한이 120초라, 올릴 생각이면 한 장당 시간을 먼저 재야 한다.
+IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY", "").strip()
+
+# 참조로 넣은 브랜드 실사를 얼마나 그대로 따라갈지.
+#
+# ⚠️ gpt-image-1 계열 전용이다. gpt-image-2 에 넘기면 400 으로 카드가 통째로 실패한다.
+#      "The model 'gpt-image-2' does not support the 'input_fidelity' parameter."
+#    그래서 기본값은 꺼 둔다. gpt-image-1 로 내릴 때만 켠다.
+INPUT_FIDELITY = os.getenv("OPENAI_INPUT_FIDELITY", "").strip()
+
+# 화면에서 그대로 내려받을 수 있게 png 로 고정한다.
+# 응답을 data:image/png 로 감싸 돌려주므로 이 값과 어긋나면 안 된다.
+IMAGE_FORMAT = "png"
 
 #: 이미지 생성에 참조로 넣을 수 있는 유일한 경로
 REFERENCE_PATH = "events[].products[].detail_image_urls"
 
 # 단계를 명세 순서대로 되돌리기 위한 표
 STAGE_ORDER = {stage["stage"]: index for index, stage in enumerate(CARD_STAGES)}
+
+#: 큐레이터 아바타를 얹는 카드와 사진 경로
+COVER_STAGE = "표지"
+CURATOR_IMAGE_PATH = "events[].curator.profile_image_url"
+
+#: 아바타를 카드 가장자리에서 얼마나 띄울지
+AVATAR_MARGIN = 56
 
 #: 가격표 카드는 공구 카드뉴스에 반드시 한 장 있어야 한다
 PRICE_STAGE = "가격 & 스펙"
@@ -405,9 +447,10 @@ async def create_draft(payload: DraftRequest):
 
     client = _client()
 
+    # 문구 쓰기만 생각을 더 시킨다. 다른 두 호출과 값이 다르다.
     options: dict[str, Any] = {}
-    if REASONING_EFFORT:
-        options["reasoning_effort"] = REASONING_EFFORT
+    if DRAFT_REASONING_EFFORT:
+        options["reasoning_effort"] = DRAFT_REASONING_EFFORT
 
     try:
         completion = await client.chat.completions.create(
@@ -585,6 +628,65 @@ MIN_REFERENCE_BYTES = 20_000
 MAX_REFERENCE_BYTES = 20_000_000
 
 
+def _avatar_spot(text_position: str, card: tuple[int, int]) -> tuple[str, tuple[int, int]]:
+    """아바타를 놓을 모서리 이름과 좌표.
+
+    기본은 오른쪽 아래다. 다만 문구도 아래쪽에 모이면 서로 겹치므로
+    그때만 오른쪽 위로 피한다. 문구 위치는 이미 정해져서 넘어오기 때문에
+    겹칠지 아닐지를 여기서 계산할 수 있다.
+    """
+
+    width, height = card
+    x = width - avatar.SIZE - AVATAR_MARGIN
+
+    if text_position == "bottom":
+        return "오른쪽 위", (x, AVATAR_MARGIN)
+
+    return "오른쪽 아래", (x, height - avatar.SIZE - AVATAR_MARGIN)
+
+
+async def _fetch_avatar(data: Any) -> bytes | None:
+    """큐레이터 프로필 사진을 받아 원형 아바타로 만든다.
+
+    참조 사진과 달리 크기 하한을 두지 않는다. 프로필은 원래 작은 파일이다.
+    """
+
+    values = extract_values(data, [CURATOR_IMAGE_PATH], max_items=1).get(
+        CURATOR_IMAGE_PATH, []
+    )
+    url = next((v for v in values if isinstance(v, str) and v.startswith("http")), None)
+
+    if not url:
+        return None
+
+    import httpx2
+
+    try:
+        async with httpx2.AsyncClient(timeout=15, follow_redirects=True) as http:
+            response = await http.get(url)
+            response.raise_for_status()
+
+            return avatar.build(response.content)
+    except Exception:
+        # 아바타가 없다고 카드까지 실패시키지는 않는다
+        return None
+
+
+def _paste_avatar(card_png: bytes, badge: bytes, text_position: str) -> bytes:
+    """만들어진 카드 위에 아바타를 얹는다."""
+
+    card = Image.open(io.BytesIO(card_png)).convert("RGBA")
+    badge_image = Image.open(io.BytesIO(badge)).convert("RGBA")
+
+    _, spot = _avatar_spot(text_position, card.size)
+    card.alpha_composite(badge_image, spot)
+
+    buffer = io.BytesIO()
+    card.convert("RGB").save(buffer, format="PNG")
+
+    return buffer.getvalue()
+
+
 async def _download(url: str) -> tuple[bytes, str] | None:
     """상품 사진을 내려받는다. 쓸 수 없는 파일이면 None 을 준다."""
 
@@ -641,6 +743,13 @@ async def create_image(payload: ImageRequest):
         if len(references) >= MAX_REFERENCES:
             break
 
+    text_position = _pick(payload.text_position, TEXT_POSITIONS, "bottom")
+
+    # 표지에는 큐레이터 얼굴이 들어간다. 실제 사진이라 모델이 그리지 못하므로
+    # 다 만들어진 뒤에 코드가 얹고, 프롬프트로는 그 자리를 미리 비워 둔다.
+    badge = await _fetch_avatar(payload.data) if payload.section == COVER_STAGE else None
+    corner = _avatar_spot(text_position, (1, 1))[0] if badge else None
+
     prompt = build_image_prompt(
         section=payload.section,
         title=payload.title,
@@ -648,10 +757,15 @@ async def create_image(payload: ImageRequest):
         highlight=payload.highlight,
         items=[item.model_dump() for item in payload.items],
         has_reference=bool(references),
-        text_position=_pick(payload.text_position, TEXT_POSITIONS, "bottom"),
+        text_position=text_position,
         text_align=_pick(payload.text_align, TEXT_ALIGNS, "left"),
         theme=_pick(payload.theme, THEMES, "dark"),
+        avatar_corner=corner,
     )
+
+    options: dict[str, Any] = {"output_format": IMAGE_FORMAT}
+    if IMAGE_QUALITY:
+        options["quality"] = IMAGE_QUALITY
 
     async def render(with_references: bool):
         if with_references and references:
@@ -660,12 +774,17 @@ async def create_image(payload: ImageRequest):
                 for index, (content, content_type) in enumerate(references)
             ]
 
+            edit_options = dict(options)
+            if INPUT_FIDELITY:
+                edit_options["input_fidelity"] = INPUT_FIDELITY
+
             return await client.images.edit(
                 model=IMAGE_MODEL,
                 image=files,
                 prompt=prompt,
                 size=IMAGE_SIZE,
                 n=1,
+                **edit_options,
             )
 
         return await client.images.generate(
@@ -673,6 +792,7 @@ async def create_image(payload: ImageRequest):
             prompt=prompt,
             size=IMAGE_SIZE,
             n=1,
+            **options,
         )
 
     try:
@@ -700,7 +820,15 @@ async def create_image(payload: ImageRequest):
     if not encoded:
         raise HTTPException(status_code=502, detail="이미지 응답이 비어 있습니다.")
 
+    if badge:
+        try:
+            merged = _paste_avatar(base64.b64decode(encoded), badge, text_position)
+            encoded = base64.b64encode(merged).decode()
+        except Exception:
+            # 합성이 실패해도 카드 자체는 살린다. 아바타만 빠진다.
+            pass
+
     return ImageResponse(
-        imageBase64=f"data:image/png;base64,{encoded}",
+        imageBase64=f"data:image/{IMAGE_FORMAT};base64,{encoded}",
         usedReference=bool(references),
     )

@@ -34,18 +34,19 @@ export function StepCard({
       className={cn(
         "rounded-xl border px-4 py-3.5 transition-colors",
         state === "done" && "border-solid bg-card",
-        state === "active" &&
-          "border-amber-500/60 bg-amber-50 dark:bg-amber-950/20",
+        state === "active" && "border-primary/60 bg-accent",
         state === "idle" && "border-dashed text-muted-foreground",
-        clickable && "cursor-pointer hover:border-foreground/30",
+        clickable && "cursor-pointer hover:border-primary/40",
       )}
     >
       <div className="flex items-start gap-3">
         <span
           className={cn(
             "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-xs",
-            state === "done" && "border-foreground bg-foreground text-background",
-            state === "active" && "border-amber-600 text-amber-700 dark:text-amber-500",
+            // 끝난 단계는 브랜드 색으로 채우고, 지금 할 단계는 테두리만 준다.
+            // 채운 쪽이 더 눈에 띄어서 어디까지 왔는지가 먼저 읽힌다.
+            state === "done" && "border-primary bg-primary text-primary-foreground",
+            state === "active" && "border-primary bg-background text-primary",
             state === "idle" && "border-dashed",
           )}
         >
