@@ -116,13 +116,19 @@ export type CardImageResponse = {
 /**
  * 카드 한 장을 통째로 만든다. 문구도 이미지 안에 함께 그려진다.
  * 카드마다 30초 안팎이 걸려서 한 장씩 따로 부른다.
+ *
+ * instruction 은 문구 단계에 보낸 것과 같은 지시문이다.
+ * 두 단계가 같은 글을 읽고 각자 필요한 부분만 가져간다.
+ * 문구 단계는 말투를, 여기서는 배경과 분위기를 본다.
  */
 export function requestCardImage(
   data: JsonValue,
   card: CardText & { sourceKeys: string[] },
+  instruction: string,
 ) {
   return post<CardImageResponse>("/api/cardnews/image", {
     data,
+    instruction,
     section: card.section,
     title: card.title,
     body: card.body,

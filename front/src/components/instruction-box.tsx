@@ -33,6 +33,7 @@ const ALLOWED: [string, string][] = [
   ["표현 금지", "“‘초특가’라는 말은 쓰지 마세요”"],
   ["크게 보일 값", "“할인율 말고 마감일을 크게”"],
   ["카드 밝기·문구 위치", "“밝은 느낌으로” “글자를 위쪽에”"],
+  ["배경·분위기", "“바다가 보이면 좋겠어요” “가을 느낌으로”"],
 ];
 
 const BLOCKED: [string, string][] = [
@@ -40,7 +41,7 @@ const BLOCKED: [string, string][] = [
   ["카드에 쓸 데이터 바꾸기", "구성안이 지목한 값만 문구에 쓰입니다"],
   ["22자를 넘는 제목", "글자 수는 고정입니다"],
   ["데이터에 없는 내용", "없는 사실은 쓰지 않습니다"],
-  ["이미지 장면·그림체", "“배경을 숲으로”는 전달되지 않습니다"],
+  ["사람이 나오는 장면", "얼굴·아이는 안전 필터에 막혀 카드가 실패합니다"],
 ];
 
 export function InstructionBox({
@@ -102,7 +103,8 @@ export function InstructionBox({
             </dl>
 
             <p className="mt-3 text-xs text-muted-foreground">
-              문구를 <span className="font-medium">어떻게 쓸지</span>는 바꿀 수
+              문구를 <span className="font-medium">어떻게 쓸지</span>와 카드의{" "}
+              <span className="font-medium">보이는 방식</span>을 바꿀 수
               있습니다. <span className="font-medium">무엇을 쓸지</span>는 위
               구성안에서 이미 정해집니다.
             </p>
