@@ -34,7 +34,7 @@ from prompts import (
     build_plan_prompt,
 )
 
-# database.py 를 거치지 않고 이 모듈만 불러도 .env 가 읽히도록 한다
+# main.py 를 거치지 않고 이 모듈만 불러도 .env 가 읽히도록 한다
 load_dotenv()
 
 router = APIRouter(

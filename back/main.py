@@ -1,9 +1,8 @@
 from fastapi import FastAPI
-from controller import cardnews, items
+from controller import cardnews
 
 app = FastAPI()
 
-app.include_router(items.router)
 app.include_router(cardnews.router)
 
 
