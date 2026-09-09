@@ -60,8 +60,8 @@ export default function CardNewsPage() {
   const [assets, setAssets] = useState<CardAsset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetsError, setAssetsError] = useState<string | null>(null);
-  // 사용자가 직접 고른 움직이는 상세컷. 고른 것만 카드에 쓰인다.
-  const [pickedGifs, setPickedGifs] = useState<string[]>([]);
+  // 사용자가 직접 고른 움직이는 상세컷. 고른 것만 카드에 쓰이며 하나만 고른다.
+  const [pickedGif, setPickedGif] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftCard[] | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -101,7 +101,7 @@ export default function CardNewsPage() {
     try {
       // 정지 상세컷은 모두 넘기고, 움짤은 사용자가 고른 것만 넘긴다.
       const usable = assets.filter(
-        (asset) => !asset.animated || pickedGifs.includes(asset.url),
+        (asset) => !asset.animated || asset.url === pickedGif,
       );
 
       const result = await requestCardDraft(data, cardPlan, instruction, usable);
@@ -207,7 +207,7 @@ export default function CardNewsPage() {
     const requestId = ++assetIdRef.current;
 
     setAssets([]);
-    setPickedGifs([]);
+    setPickedGif(null);
     setAssetsError(null);
     setAssetsLoading(true);
 
@@ -261,7 +261,7 @@ export default function CardNewsPage() {
     setPlanError(null);
 
     setAssets([]);
-    setPickedGifs([]);
+    setPickedGif(null);
     setAssetsLoading(false);
     setAssetsError(null);
 
@@ -467,7 +467,7 @@ export default function CardNewsPage() {
 
               {data ? (
                 <>
-                  <DataPanel data={data} onChange={setData} />
+                  <DataPanel data={data} />
 
                   <CardPlan
                     plan={cardPlan}
@@ -478,8 +478,8 @@ export default function CardNewsPage() {
 
                   <GifPicker
                     gifs={assets.filter((asset) => asset.animated)}
-                    selected={pickedGifs}
-                    onChange={setPickedGifs}
+                    selected={pickedGif}
+                    onChange={setPickedGif}
                     loading={assetsLoading}
                     error={assetsError}
                   />

@@ -11,10 +11,10 @@ import { cn } from "@/lib/utils";
 
    고른 것만 카드에 쓰인다. 어느 카드에 넣을지는 AI 가 정한다.
    움직이는 카드는 문구가 이미지 아래에 붙어서 다른 카드와 결이 조금 다르다.
-   그래서 기본은 아무것도 고르지 않은 상태로 둔다. */
+   그래서 기본은 아무것도 고르지 않은 상태로 둔다.
 
-/** 한 번에 고를 수 있는 최대 개수. 서버도 같은 값으로 막는다. */
-const MAX_PICK = 3;
+   고를 수 있는 것은 하나뿐이다. 서버도 같은 값으로 막는다(MAX_ANIMATED).
+   여러 장이 들어가면 결이 다른 카드가 늘어나 카드뉴스 전체 흐름이 깨진다. */
 
 export function GifPicker({
   gifs,
@@ -24,8 +24,8 @@ export function GifPicker({
   error,
 }: {
   gifs: CardAsset[];
-  selected: string[];
-  onChange: (urls: string[]) => void;
+  selected: string | null;
+  onChange: (url: string | null) => void;
   loading: boolean;
   error: string | null;
 }) {
@@ -62,17 +62,11 @@ export function GifPicker({
 
   if (gifs.length === 0) return null;
 
-  const full = selected.length >= MAX_PICK;
-
+  // 고른 것을 다시 누르면 해제하고, 다른 것을 누르면 그쪽으로 갈아탄다.
+  // 하나만 고를 수 있다고 해서 나머지를 잠가 두면 바꿀 때마다 해제를 먼저
+  // 눌러야 해서 번거롭다.
   function toggle(url: string) {
-    if (selected.includes(url)) {
-      onChange(selected.filter((item) => item !== url));
-      return;
-    }
-
-    if (selected.length >= MAX_PICK) return;
-
-    onChange([...selected, url]);
+    onChange(selected === url ? null : url);
   }
 
   return (
@@ -80,16 +74,16 @@ export function GifPicker({
       <div className="flex items-center gap-3 px-5 pt-5">
         <h2 className="text-sm font-semibold">움직이는 상세컷</h2>
         <span className="text-xs text-muted-foreground">
-          고른 것은 반드시 쓰입니다 · 최대 {MAX_PICK}개 · 어느 카드에 넣을지는 AI가
-          정합니다
+          고른 것은 반드시 쓰입니다 · 1개만 고를 수 있습니다 · 어느 카드에
+          넣을지는 AI가 정합니다
         </span>
 
-        {selected.length > 0 && (
+        {selected && (
           <Button
             variant="ghost"
             size="sm"
             className="ml-auto h-7 text-xs"
-            onClick={() => onChange([])}
+            onClick={() => onChange(null)}
           >
             선택 해제
           </Button>
@@ -98,22 +92,18 @@ export function GifPicker({
 
       <div className="grid grid-cols-3 gap-3 px-5 pt-4 sm:grid-cols-4 xl:grid-cols-5">
         {gifs.map((gif) => {
-          const picked = selected.includes(gif.url);
-          const blocked = full && !picked;
+          const picked = selected === gif.url;
 
           return (
             <button
               key={gif.url}
               type="button"
               onClick={() => toggle(gif.url)}
-              disabled={blocked}
-              title={blocked ? `최대 ${MAX_PICK}개까지 고를 수 있습니다` : undefined}
               className={cn(
                 "group relative overflow-hidden rounded-lg border-2 text-left transition",
                 picked
                   ? "border-primary"
                   : "border-transparent hover:border-muted-foreground/30",
-                blocked && "cursor-not-allowed opacity-40",
               )}
             >
               <div className="relative aspect-square bg-white">
@@ -157,9 +147,9 @@ export function GifPicker({
       </div>
 
       <p className="px-5 py-4 text-xs text-muted-foreground">
-        {selected.length === 0
-          ? "고르지 않으면 모든 카드를 AI가 새로 만듭니다."
-          : `${selected.length}/${MAX_PICK}개 선택 · 첫 장과 마지막 장에는 들어가지 않습니다.`}
+        {selected
+          ? "1개 선택 · 첫 장과 마지막 장에는 들어가지 않습니다."
+          : "고르지 않으면 모든 카드를 AI가 새로 만듭니다."}
       </p>
     </section>
   );
