@@ -92,8 +92,10 @@ STAGE_ORDER = {stage["stage"]: index for index, stage in enumerate(CARD_STAGES)}
 COVER_STAGE = "표지"
 CURATOR_IMAGE_PATH = "events[].curator.profile_image_url"
 
-#: 아바타를 카드 가장자리에서 얼마나 띄울지
-AVATAR_MARGIN = 56
+#: 아바타를 카드 가장자리에서 얼마나 띄울지.
+#: 문구는 카드 가운데로 모이므로, 모서리에 바짝 붙일수록 글자와 덜 겹친다.
+#: 56 일 때 표지의 마지막 줄 끝이 아바타에 가려지는 일이 있어 24 로 좁혔다.
+AVATAR_MARGIN = 24
 
 #: 가격표 카드는 공구 카드뉴스에 반드시 한 장 있어야 한다
 PRICE_STAGE = "가격 & 스펙"
