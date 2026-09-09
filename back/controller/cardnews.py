@@ -1,14 +1,17 @@
+import asyncio
 import base64
 import io
+import ipaddress
 import json
 import os
 import random
 from typing import Any
+from urllib.parse import urlparse
 
 from PIL import Image
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 import avatar
@@ -227,6 +230,103 @@ async def create_plan(payload: PlanRequest):
         ],
         emptyKeys=missing,
     )
+
+
+# ────────────────────────────────────────────────
+# 움짤 원본 내려주기
+#
+# 내보내기에서 쓴다. 움짤 카드는 브랜드 서버의 원본을 그대로 쓰는데, 그 서버들이
+# CORS 를 열어 주지 않아 브라우저가 직접 받지 못한다. 그래서 그 카드만 빠지고
+# 나머지만 저장되는 일이 있었다. 서버는 CORS 와 무관하게 받을 수 있으니 대신 받아
+# 넘겨준다.
+#
+# 형식은 바꾸지 않는다. gif 를 png 로 바꾸면 움직임이 사라진다.
+# ────────────────────────────────────────────────
+
+#: 원본을 그대로 넘겨줄 형식. 이 밖의 것은 카드 이미지가 아니므로 받지 않는다.
+PASSTHROUGH_MIME = {
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+}
+
+ASSET_TIMEOUT = 30
+
+#: 브랜드 상세컷은 프레임이 100장을 넘는 것이 있어 생각보다 크다.
+#: 실제로 141프레임 webp 가 31MB 였다. 너무 조이면 그 카드만 또 빠진다.
+MAX_ASSET_BYTES = 64_000_000
+
+
+async def _reject_private(host: str) -> None:
+    """사내망이나 로컬 주소를 향한 요청을 막는다.
+
+    주소를 받아서 서버가 대신 열어 주는 창구라, 막아 두지 않으면 바깥에서
+    내부 주소를 넣어 훔쳐보는 통로가 된다. 이름을 실제로 풀어 본 뒤 판단한다.
+    """
+
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except Exception:
+        raise HTTPException(status_code=400, detail="주소를 찾을 수 없습니다.")
+
+    for info in infos:
+        address = ipaddress.ip_address(info[4][0])
+
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+        ):
+            raise HTTPException(status_code=400, detail="허용되지 않는 주소입니다.")
+
+
+@router.get("/asset")
+async def fetch_asset(url: str):
+    """움짤 원본을 받아서 형식 그대로 넘겨준다."""
+
+    parsed = urlparse(url)
+
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="http(s) 주소만 받습니다.")
+
+    await _reject_private(parsed.hostname)
+
+    import httpx2
+
+    try:
+        async with httpx2.AsyncClient(
+            timeout=ASSET_TIMEOUT, follow_redirects=True
+        ) as http:
+            response = await http.get(url)
+            response.raise_for_status()
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"원본을 받지 못했습니다: {error}"
+        ) from error
+
+    if len(response.content) > MAX_ASSET_BYTES:
+        raise HTTPException(status_code=502, detail="파일이 너무 큽니다.")
+
+    content_type = response.headers.get("content-type", "").split(";")[0].strip()
+
+    # Content-Type 을 안 보내거나 엉뚱하게 보내는 서버가 있다 (프랭클린 상세페이지가 그렇다).
+    # 헤더를 믿지 말고 실제로 열어 보고 판단한다.
+    if content_type not in PASSTHROUGH_MIME:
+        try:
+            fmt = Image.open(io.BytesIO(response.content)).format or ""
+        except Exception:
+            raise HTTPException(status_code=502, detail="이미지가 아닙니다.")
+
+        content_type = f"image/{fmt.lower()}"
+
+        if content_type not in PASSTHROUGH_MIME:
+            raise HTTPException(
+                status_code=502, detail=f"내려받을 수 없는 형식입니다: {fmt}"
+            )
+
+    return Response(content=response.content, media_type=content_type)
 
 
 # ────────────────────────────────────────────────
