@@ -48,7 +48,7 @@ TEXT_MODEL = os.getenv("OPENAI_TEXT_MODEL", "gpt-5")
 # 추론 모델이 아닌 모델(gpt-4.1 등)을 쓸 때는 빈 값으로 두어 옵션을 빼야 한다.
 #
 # 구성안 고르기와 사진 분류는 생각을 오래 시켜도 결과가 거의 같아서 low 로 둔다.
-# (medium 은 한 번에 50초를 넘긴다. 배포 nginx 응답 제한은 120초다)
+# (medium 은 한 번에 50초를 넘긴다. 배포 nginx 응답 제한은 300초다)
 REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip()
 
 # 문구 쓰기만 따로 올린다.
@@ -68,7 +68,7 @@ IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
 #
 # high 로 올려 봤더니 한 장당 시간이 눈에 띄게 늘어 카드 8장 전체가 두 배 가까이
 # 걸렸다. 화질 차이는 그만큼 크지 않아서 기본값으로 되돌렸다.
-# 배포 nginx 응답 제한이 120초라, 올릴 생각이면 한 장당 시간을 먼저 재야 한다.
+# 배포 nginx 응답 제한이 300초라, 올릴 생각이면 한 장당 시간을 먼저 재야 한다.
 IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY", "").strip()
 
 # 참조로 넣은 브랜드 실사를 얼마나 그대로 따라갈지.
