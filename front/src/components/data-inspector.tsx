@@ -3,19 +3,16 @@
 import { useState } from "react";
 import { ChevronRight, ImageOff } from "lucide-react";
 
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  isPrimitive,
-  updateAtPath,
-  type JsonPath as Path,
-  type JsonValue,
-} from "@/lib/json";
+import { isPrimitive, type JsonValue } from "@/lib/json";
 import { cn } from "@/lib/utils";
 
 /* ────────────────────────────────────────────────
-   업로드한 공구 JSON을 사람이 읽을 수 있는 형태로 펼쳐 보여주고,
-   값을 그 자리에서 고칠 수 있게 하는 뷰어.
+   업로드한 공구 JSON을 사람이 읽을 수 있는 형태로 펼쳐 보여주는 뷰어.
+
+   값은 보여주기만 하고 고치지 못한다. 카드에 들어가는 내용은 올린 파일과
+   언제나 같아야 하기 때문이다. 화면에서 고칠 수 있으면 원본 파일과 화면이
+   어긋나고, 만들어진 카드가 어느 쪽을 따른 것인지 알 수 없게 된다.
+   잘못된 값은 원본 JSON을 고쳐 다시 올린다.
 
    데이터가 길어서(상품 수십 개 + 리뷰) 한 번에 다 그리면 읽을 수 없기 때문에,
    목록은 한 줄 요약만 보여주고 클릭했을 때만 내용을 펼친다.
@@ -114,23 +111,13 @@ function describe(value: JsonValue) {
   return undefined;
 }
 
-export function DataInspector({
-  data,
-  onChange,
-}: {
-  data: JsonValue;
-  onChange: (next: JsonValue) => void;
-}) {
-  function setValue(path: Path, value: JsonValue) {
-    onChange(updateAtPath(data, path, value));
-  }
-
+export function DataInspector({ data }: { data: JsonValue }) {
   if (isPrimitive(data)) {
-    return <ValueEditor value={data} path={[]} onCommit={setValue} />;
+    return <ValueView value={data} />;
   }
 
   if (Array.isArray(data)) {
-    return <NodeBody value={data} path={[]} onCommit={setValue} />;
+    return <NodeBody value={data} />;
   }
 
   const entries = Object.entries(data as Record<string, JsonValue>);
@@ -147,13 +134,7 @@ export function DataInspector({
         >
           <dl className="divide-y">
             {primitives.map(([key, value]) => (
-              <FieldRow
-                key={key}
-                label={key}
-                value={value}
-                path={[key]}
-                onCommit={setValue}
-              />
+              <FieldRow key={key} label={key} value={value} />
             ))}
           </dl>
         </Block>
@@ -167,7 +148,7 @@ export function DataInspector({
           meta={describe(value)}
           defaultOpen
         >
-          <NodeBody value={value} path={[key]} onCommit={setValue} />
+          <NodeBody value={value} />
         </Block>
       ))}
     </div>
@@ -214,15 +195,7 @@ function Block({
 }
 
 /** 객체/배열/원시값을 각각의 모양에 맞게 그린다. */
-function NodeBody({
-  value,
-  path,
-  onCommit,
-}: {
-  value: JsonValue;
-  path: Path;
-  onCommit: (path: Path, value: JsonValue) => void;
-}) {
+function NodeBody({ value }: { value: JsonValue }) {
   // 같은 모양의 객체 배열 → 한 줄 요약 목록. 클릭해야 내용이 열린다.
   if (isObjectArray(value)) {
     const columns = Array.from(
@@ -243,8 +216,6 @@ function NodeBody({
                   key={column}
                   label={column}
                   value={row[column] ?? null}
-                  path={[...path, index, column]}
-                  onCommit={onCommit}
                 />
               ))}
             </dl>
@@ -263,13 +234,7 @@ function NodeBody({
     return (
       <dl className="divide-y">
         {value.map((item, index) => (
-          <FieldRow
-            key={index}
-            label={`${index + 1}`}
-            value={item}
-            path={[...path, index]}
-            onCommit={onCommit}
-          />
+          <FieldRow key={index} label={`${index + 1}`} value={item} />
         ))}
       </dl>
     );
@@ -286,38 +251,22 @@ function NodeBody({
     return (
       <dl className="divide-y">
         {entries.map(([key, child]) => (
-          <FieldRow
-            key={key}
-            label={key}
-            value={child}
-            path={[...path, key]}
-            onCommit={onCommit}
-          />
+          <FieldRow key={key} label={key} value={child} />
         ))}
       </dl>
     );
   }
 
-  return <ValueEditor value={value} path={path} onCommit={onCommit} />;
+  return <ValueView value={value} />;
 }
 
-function FieldRow({
-  label,
-  value,
-  path,
-  onCommit,
-}: {
-  label: string;
-  value: JsonValue;
-  path: Path;
-  onCommit: (path: Path, value: JsonValue) => void;
-}) {
+function FieldRow({ label, value }: { label: string; value: JsonValue }) {
   // 중첩 구조는 접힌 블록으로 두고, 눌렀을 때만 펼친다
   if (!isPrimitive(value)) {
     return (
       <div className="p-2">
         <Block title={humanize(label)} meta={describe(value)}>
-          <NodeBody value={value} path={path} onCommit={onCommit} />
+          <NodeBody value={value} />
         </Block>
       </div>
     );
@@ -325,90 +274,49 @@ function FieldRow({
 
   return (
     <div className="grid grid-cols-[minmax(80px,150px)_1fr] items-start gap-3 px-3 py-2">
-      <dt className="pt-2 text-xs break-words text-muted-foreground">
+      <dt className="text-xs break-words text-muted-foreground">
         {humanize(label)}
       </dt>
-      <dd>
-        <ValueEditor value={value} path={path} onCommit={onCommit} />
+      <dd className="min-w-0">
+        <ValueView value={value} />
       </dd>
     </div>
   );
 }
 
-function ValueEditor({
-  value,
-  path,
-  onCommit,
-}: {
-  value: JsonValue;
-  path: Path;
-  onCommit: (path: Path, value: JsonValue) => void;
-}) {
+function ValueView({ value }: { value: JsonValue }) {
+  if (value === null || value === "") {
+    return <p className="text-sm text-muted-foreground/60">비어 있음</p>;
+  }
+
   if (typeof value === "boolean") {
     return (
-      <button
-        type="button"
-        onClick={() => onCommit(path, !value)}
+      <span
         className={cn(
-          "rounded-md border px-2.5 py-1 text-xs transition-colors",
+          "inline-block rounded-md border px-2.5 py-1 text-xs",
           value
             ? "border-primary/30 bg-primary/10 text-foreground"
             : "text-muted-foreground",
         )}
       >
         {value ? "예" : "아니오"}
-      </button>
+      </span>
     );
   }
 
   if (isImageUrl(value)) {
-    return <ImageField value={value} path={path} onCommit={onCommit} />;
+    return <ImageView value={value} />;
   }
 
-  const text = value === null ? "" : String(value);
-  const isNumber = typeof value === "number";
-
-  // 값의 원래 타입이 숫자면 숫자로 되돌려 저장한다
-  function commit(next: string) {
-    if (isNumber) {
-      const parsed = Number(next);
-      onCommit(path, next.trim() !== "" && !Number.isNaN(parsed) ? parsed : next);
-      return;
-    }
-
-    onCommit(path, next);
-  }
-
-  if (text.length > 60) {
-    return (
-      <Textarea
-        value={text}
-        onChange={(event) => commit(event.target.value)}
-        className="min-h-[72px] resize-y text-sm"
-      />
-    );
-  }
+  // 숫자는 자릿수를 끊어 읽기 쉽게 한다 (가격, 리뷰 수가 대부분이다)
+  const text = typeof value === "number" ? value.toLocaleString() : String(value);
 
   return (
-    <Input
-      value={text}
-      inputMode={isNumber ? "numeric" : undefined}
-      onChange={(event) => commit(event.target.value)}
-      placeholder={value === null ? "비어 있음" : undefined}
-      className="h-8 text-sm"
-    />
+    <p className="text-sm break-words whitespace-pre-wrap">{text}</p>
   );
 }
 
-function ImageField({
-  value,
-  path,
-  onCommit,
-}: {
-  value: string;
-  path: Path;
-  onCommit: (path: Path, value: JsonValue) => void;
-}) {
+function ImageView({ value }: { value: string }) {
   const [broken, setBroken] = useState(false);
 
   return (
@@ -427,14 +335,7 @@ function ImageField({
           />
         )}
       </div>
-      <Input
-        value={value}
-        onChange={(event) => {
-          setBroken(false);
-          onCommit(path, event.target.value);
-        }}
-        className="h-8 text-sm"
-      />
+      <p className="min-w-0 text-sm break-all text-muted-foreground">{value}</p>
     </div>
   );
 }
