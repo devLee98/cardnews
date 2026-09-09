@@ -150,7 +150,7 @@ export default function CardNewsPage() {
     }
   }
 
-  /** 완성된 카드를 한 장씩 파일로 내려받는다. */
+  /** 완성된 카드를 압축파일 하나로 내려받는다. */
   async function handleExport() {
     if (!drafts) return;
 
@@ -160,7 +160,9 @@ export default function CardNewsPage() {
     try {
       const { saved, failed, skipped } = await downloadCards(drafts);
 
-      const notes = [`${saved}장 저장`];
+      const notes = [
+        saved > 0 ? `압축파일에 ${saved}장 담았습니다` : "내려받을 카드가 없습니다",
+      ];
       if (skipped) notes.push(`${skipped}장은 아직 안 만들어져 건너뜀`);
       if (failed.length) notes.push(`받지 못한 카드: ${failed.join(", ")}`);
 
