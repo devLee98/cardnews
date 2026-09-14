@@ -9,10 +9,13 @@ import { cn } from "@/lib/utils";
 
 /* 완성된 카드.
 
-   대부분의 카드는 문구가 이미지 안에 함께 그려져 오므로 여기서 덧씌우지 않는다.
-   다만 움직이는 상세컷을 쓰는 카드는 예외다. gpt-image 는 gif 를 만들지 못해
-   원본을 그대로 쓰는데, 그러면 문구가 들어갈 자리가 없다.
-   그 카드만 이미지를 위쪽에 통째로 담고 아래에 문구 띠를 붙인다. 이미지를 덮지 않는다. */
+   문구는 이미지 안에 함께 그려져 오므로 여기서 덧씌우지 않는다.
+
+   움직이는 상세컷을 쓰는 카드는 문구가 아예 없다. gpt-image 가 gif 를 만들지 못해
+   브랜드 원본을 그대로 쓰는데, 그러면 글자를 이미지 안에 그려 넣을 수가 없다.
+   예전에는 이미지 아래에 문구 띠를 붙였지만, 그 글자는 화면에만 있고 파일에는 없어서
+   내보내면 사라졌다. 미리 보던 카드와 저장된 카드가 달랐다.
+   지금은 움직임 하나로 보여주는 카드로 두고, 서버가 4:5 로 맞춰 내보낸다. */
 
 export type DraftCard = CardText & {
   sourceKeys: string[];
@@ -78,10 +81,11 @@ function CardView({ card, index }: { card: DraftCard; index: number }) {
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={card.image}
-            alt={card.title}
+            alt={card.section}
             className={cn(
               "absolute inset-0 size-full",
-              // 움직이는 원본은 잘리면 내용이 사라지므로 통째로 담는다
+              // 움직이는 원본은 잘리면 내용이 사라지므로 통째로 담는다.
+              // 내보낼 때 서버가 같은 방식으로 4:5 여백을 채워서 이 모양 그대로 저장된다.
               animated ? "object-contain" : "object-cover",
             )}
           />
@@ -114,24 +118,6 @@ function CardView({ card, index }: { card: DraftCard; index: number }) {
         </Badge>
       </div>
 
-      {/* 움직이는 카드만: 이미지 아래에 문구. 이미지를 가리지 않는다.
-          상세컷 바탕이 대체로 흰색이라 문구 자리도 흰 바탕으로 이어 붙여
-          띠가 따로 얹힌 것처럼 보이지 않게 한다. */}
-      {animated && (
-        <figcaption className="shrink-0 bg-white px-5 pt-2 pb-5">
-          {card.highlight && (
-            <p className="text-3xl leading-none font-black tracking-tight text-neutral-900">
-              {card.highlight}
-            </p>
-          )}
-          <p className="mt-2 text-lg leading-snug font-bold text-neutral-900">
-            {card.title}
-          </p>
-          <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-neutral-600">
-            {card.body}
-          </p>
-        </figcaption>
-      )}
     </figure>
   );
 }

@@ -18,6 +18,19 @@ import { cn } from "@/lib/utils";
    목록은 한 줄 요약만 보여주고 클릭했을 때만 내용을 펼친다.
    ──────────────────────────────────────────────── */
 
+/* 맨 바깥에서 감출 키.
+
+   meta 는 공구가 아니라 파일에 대한 설명이다. 생성 시각, 원본 파일명, sha256 해시,
+   내부 공지, 전체 집계 같은 것들이라 카드를 만드는 사람이 읽을 일이 없다.
+   패널 맨 위를 18줄이나 차지하면서 정작 봐야 할 공구 정보를 아래로 밀어낸다.
+
+   숫자도 맞지 않는다. 화면은 공구가 여러 건인 파일에서 하나만 골라 쓰는데
+   meta 의 집계는 파일 전체 기준이라, 상품 16개짜리 공구를 보면서
+   product count 154 를 읽게 된다.
+
+   안쪽에 있는 events[].meta 같은 것은 공구에 딸린 값일 수 있으므로 건드리지 않는다. */
+const HIDDEN_ROOT_KEYS = ["meta"];
+
 const IMAGE_PATTERN = /\.(png|jpe?g|webp|gif|avif)(\?|$)/i;
 
 function isImageUrl(value: JsonValue): value is string {
@@ -120,7 +133,9 @@ export function DataInspector({ data }: { data: JsonValue }) {
     return <NodeBody value={data} />;
   }
 
-  const entries = Object.entries(data as Record<string, JsonValue>);
+  const entries = Object.entries(data as Record<string, JsonValue>).filter(
+    ([key]) => !HIDDEN_ROOT_KEYS.includes(key),
+  );
   const primitives = entries.filter(([, value]) => isPrimitive(value));
   const groups = entries.filter(([, value]) => !isPrimitive(value));
 
