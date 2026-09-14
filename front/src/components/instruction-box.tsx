@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 
+import { Panel } from "@/components/panel";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -54,13 +55,11 @@ export function InstructionBox({
   const [open, setOpen] = useState(false);
 
   return (
-    <section className="rounded-xl border bg-card">
-      <div className="flex items-center gap-3 px-5 pt-5">
-        <h2 className="text-sm font-semibold">추가 인스트럭션</h2>
-        <span className="ml-auto text-xs text-muted-foreground">선택 입력</span>
-      </div>
-
-      <div className="px-5 pt-4 pb-4">
+    <Panel
+      title="추가 인스트럭션"
+      action={<span className="text-xs text-muted-foreground">선택 입력</span>}
+    >
+      <div>
         <Textarea
           value={value}
           maxLength={MAX_INSTRUCTION}
@@ -77,7 +76,7 @@ export function InstructionBox({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-center gap-1.5 border-t px-5 py-3 text-left text-xs text-muted-foreground hover:text-foreground"
+        className="mt-3 flex w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground"
       >
         <ChevronDown
           className={cn("size-3.5 transition-transform", open && "rotate-180")}
@@ -86,7 +85,7 @@ export function InstructionBox({
       </button>
 
       {open && (
-        <div className="grid gap-5 border-t px-5 py-4 sm:grid-cols-2">
+        <div className="mt-3 grid gap-5 rounded-xl border border-dashed px-4 py-4 sm:grid-cols-2">
           <div>
             <p className="flex items-center gap-1.5 text-xs font-medium">
               <Check className="size-3.5 text-emerald-600" />
@@ -132,6 +131,6 @@ export function InstructionBox({
           </div>
         </div>
       )}
-    </section>
+    </Panel>
   );
 }

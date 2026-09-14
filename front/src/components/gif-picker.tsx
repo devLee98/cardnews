@@ -2,6 +2,7 @@
 
 import { Check, Clapperboard, Loader2, TriangleAlert } from "lucide-react";
 
+import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { CardAsset } from "@/lib/api";
@@ -33,30 +34,30 @@ export function GifPicker({
   // 자리를 잡아 두고 진행 중이라는 것을 알린다.
   if (loading) {
     return (
-      <section className="rounded-xl border bg-card">
-        <div className="flex items-center gap-3 px-5 pt-5">
-          <h2 className="text-sm font-semibold">움직이는 상세컷</h2>
-          <span className="text-xs text-muted-foreground">
-            공구 데이터에서 찾는 중입니다 · 1분 정도 걸립니다
-          </span>
-        </div>
-
-        <div className="flex items-center justify-center py-10">
+      <Panel
+        title="움직이는 상세컷"
+        hint="공구 데이터에서 찾는 중입니다 · 1분 정도 걸립니다"
+      >
+        <div className="flex items-center justify-center py-8">
           <Loader2 className="size-6 animate-spin text-primary" />
         </div>
-      </section>
+      </Panel>
     );
   }
 
   if (error) {
     return (
-      <section className="rounded-xl border bg-card">
-        <div className="flex items-center gap-2.5 px-5 py-5">
-          <TriangleAlert className="size-4 text-amber-600" />
-          <h2 className="text-sm font-semibold">움직이는 상세컷</h2>
-          <span className="text-xs text-muted-foreground">{error}</span>
-        </div>
-      </section>
+      <Panel
+        title="움직이는 상세컷"
+        hint={
+          <span className="flex items-center gap-1.5">
+            <TriangleAlert className="size-3.5 text-amber-600" />
+            {error}
+          </span>
+        }
+      >
+        {null}
+      </Panel>
     );
   }
 
@@ -70,27 +71,18 @@ export function GifPicker({
   }
 
   return (
-    <section className="rounded-xl border bg-card">
-      <div className="flex items-center gap-3 px-5 pt-5">
-        <h2 className="text-sm font-semibold">움직이는 상세컷</h2>
-        <span className="text-xs text-muted-foreground">
-          고른 것은 반드시 쓰입니다 · 1개만 고를 수 있습니다 · 어느 카드에
-          넣을지는 AI가 정합니다
-        </span>
-
-        {selected && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ml-auto h-7 text-xs"
-            onClick={() => onChange(null)}
-          >
+    <Panel
+      title="움직이는 상세컷"
+      hint="고른 것은 반드시 쓰입니다 · 1개만 고를 수 있습니다 · 어느 카드에 넣을지는 AI가 정합니다"
+      action={
+        selected ? (
+          <Button variant="ghost" size="sm" onClick={() => onChange(null)}>
             선택 해제
           </Button>
-        )}
-      </div>
-
-      <div className="grid grid-cols-3 gap-3 px-5 pt-4 sm:grid-cols-4 xl:grid-cols-5">
+        ) : undefined
+      }
+    >
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 xl:grid-cols-5">
         {gifs.map((gif) => {
           const picked = selected === gif.url;
 
@@ -146,11 +138,11 @@ export function GifPicker({
         })}
       </div>
 
-      <p className="px-5 py-4 text-xs text-muted-foreground">
+      <p className="mt-3 text-xs text-muted-foreground">
         {selected
           ? "1개 선택 · 첫 장과 마지막 장에는 들어가지 않습니다."
           : "고르지 않으면 모든 카드를 AI가 새로 만듭니다."}
       </p>
-    </section>
+    </Panel>
   );
 }

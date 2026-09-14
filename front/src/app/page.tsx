@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Image from "next/image";
-import { Download, FileJson, Sparkles, Upload } from "lucide-react";
+import { Check, Download, FileJson, Loader2, Sparkles, Upload } from "lucide-react";
 
 import {
   CardDraftGrid,
@@ -14,6 +14,7 @@ import { EventPicker } from "@/components/event-picker";
 import { GifPicker } from "@/components/gif-picker";
 import { DataPanel } from "@/components/data-panel";
 import { InstructionBox } from "@/components/instruction-box";
+import { Panel, PanelStack } from "@/components/panel";
 import { StepCard, type StepState } from "@/components/step-card";
 import { Button } from "@/components/ui/button";
 import {
@@ -331,144 +332,200 @@ export default function CardNewsPage() {
     return undefined;
   }
 
-  return (
-    <div className="min-h-screen bg-muted/40">
-      {/* ── 헤더 ── */}
-      <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-6">
-          {/* 로고 원본이 327x84 라 그 비율(3.89:1)을 지켜 높이 22px 로 줄인다 */}
-          <Image
-            src="/logo.png"
-            alt="Quedot"
-            width={86}
-            height={22}
-            priority
-          />
-          <span className="text-sm font-semibold text-muted-foreground">
-            카드뉴스
-          </span>
+  /* 워크스페이스 머리글. 지금 무엇을 보고 있는지 한 줄로 알린다.
+     카드 장수는 초안이 있으면 초안 기준, 없으면 구성안 기준이다. */
+  const cardCount = drafts?.length ?? cardPlan?.length ?? 0;
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-auto"
-            disabled={!exportable || exporting}
-            onClick={handleExport}
-            title={
-              pendingCards > 0
-                ? `카드 ${pendingCards}장이 아직 만들어지는 중입니다`
-                : undefined
-            }
-          >
-            <Download className={cn(exporting && "animate-pulse")} />
-            {exporting ? "내보내는 중…" : "내보내기"}
-          </Button>
-        </div>
+  function workspaceTitle() {
+    // 공구를 고르는 중에는 아래 구획 제목이 "공구 선택"이라 머리글까지 같은 말을
+    // 쓰면 두 번 읽힌다. 구성안이 나온 뒤부터만 장수를 붙인다.
+    return cardCount ? `카드뉴스 초안 · ${cardCount}장` : "카드뉴스 만들기";
+  }
+
+  /* 머리글 오른쪽 진행 표시.
+     문구 → 이미지 순으로 진행되므로 늦은 단계부터 확인한다. */
+  function workspaceStatus() {
+    if (draftLoading) return { done: false, text: "AI가 카드 문구를 쓰는 중" };
+
+    if (generating && drafts) {
+      return {
+        done: false,
+        text: `카드 만드는 중 ${readyCards}/${drafts.length}`,
+      };
+    }
+
+    if (drafts) return { done: true, text: "AI 카드뉴스 생성 완료" };
+    if (planLoading) return { done: false, text: "AI가 구성안을 짜는 중" };
+
+    return null;
+  }
+
+  const status = workspaceStatus();
+
+  return (
+    <div className="flex min-h-screen flex-col bg-background">
+      {/* ── 헤더 ── */}
+      <header className="sticky top-0 z-20 flex h-[61px] shrink-0 items-center gap-2.5 border-b bg-background/90 px-5 backdrop-blur lg:px-[35px]">
+        {/* 로고 원본이 327x84 라 그 비율(3.89:1)을 지켜 높이 22px 로 줄인다 */}
+        <Image src="/logo.png" alt="Quedot" width={86} height={22} priority />
+        <span className="text-[15px] font-medium text-muted-foreground">
+          카드뉴스
+        </span>
       </header>
 
-      <main className="mx-auto grid max-w-[1400px] grid-cols-1 items-start gap-6 p-6 lg:grid-cols-[360px_1fr]">
+      <div className="flex flex-1 flex-col lg:flex-row">
         {/* ── 좌측 단계 메뉴 ──
             넓은 화면에서는 화면에 붙여 둔다. 오른쪽 결과가 길어서 스크롤을 내리면
             지금 몇 단계인지와 생성 버튼이 화면 밖으로 사라지기 때문이다.
-            top-20 = 헤더 높이(3.5rem) + 본문 여백(1.5rem).
-            창이 낮아 메뉴가 다 안 들어가면 그때만 메뉴 안에서 스크롤된다. */}
-        <aside className="flex flex-col gap-3 lg:sticky lg:top-20 lg:max-h-[calc(100vh-5.5rem)] lg:overflow-y-auto">
-          {/* 1. 공구 데이터 업로드 */}
-          <div
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragging(false);
+            top/height 의 61px 은 헤더 높이다. 메뉴가 창보다 길면 메뉴 안에서만
+            스크롤되고 회색 바탕은 창 끝까지 채운다.
+            좁은 화면에서는 위로 올라와 단계가 두 칸씩 나란히 눕는다. */}
+        <aside className="w-full shrink-0 bg-sidebar px-5 py-4 lg:sticky lg:top-[61px] lg:h-[calc(100vh-61px)] lg:w-[330px] lg:overflow-y-auto lg:px-[34px] lg:py-[23px] lg:pb-10">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 lg:gap-3.5">
+            {/* 1. 공구 데이터 업로드 */}
+            <div
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragging(false);
 
-              const file = event.dataTransfer.files[0];
-              if (file) void readFile(file);
-            }}
-            className={cn("rounded-xl", dragging && "ring-2 ring-primary")}
-          >
-            <StepCard
-              num={1}
-              title="공구 데이터 업로드"
-              state={uploadState}
-              subtitle={
-                hasFile
-                  ? `${fileName} · ${Math.max(1, Math.round(fileSize / 1024))}KB`
-                  : "JSON 파일을 끌어다 놓거나 눌러서 선택"
-              }
-              action={hasFile ? "다시 올리기" : undefined}
-              onAction={() => fileInputRef.current?.click()}
-              onClick={hasFile ? undefined : () => fileInputRef.current?.click()}
+                const file = event.dataTransfer.files[0];
+                if (file) void readFile(file);
+              }}
+              className={cn("rounded-xl", dragging && "ring-2 ring-primary")}
+            >
+              <StepCard
+                num={1}
+                title="공구 데이터 업로드"
+                state={uploadState}
+                subtitle={
+                  hasFile
+                    ? `${fileName} · ${Math.max(1, Math.round(fileSize / 1024))}KB`
+                    : "JSON 파일을 끌어다 놓거나 눌러서 선택"
+                }
+                action={hasFile ? "다시 올리기" : undefined}
+                onAction={() => fileInputRef.current?.click()}
+                onClick={
+                  hasFile ? undefined : () => fileInputRef.current?.click()
+                }
+              />
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void readFile(file);
+              }}
             />
+
+            {fileError && (
+              <p className="px-1 text-xs text-destructive sm:col-span-2 lg:col-span-1">
+                {fileError}
+              </p>
+            )}
+
+            {/* 2. 공구 선택 — 한 파일에 공구가 여러 건 들어 있다 */}
+            <StepCard
+              num={2}
+              title="공구 선택"
+              state={eventState}
+              subtitle={eventSubtitle()}
+            />
+
+            {/* 3. 카드 구성 확인 */}
+            <StepCard
+              num={3}
+              title="카드 구성 확인"
+              state={planState}
+              subtitle={planSubtitle()}
+            />
+
+            {/* 4. 추가 인스트럭션 */}
+            <StepCard
+              num={4}
+              title="추가 인스트럭션"
+              state={instructionState}
+              subtitle="(선택)"
+            />
+
+            {/* 만들기와 내보내기는 한 덩어리로 둔다.
+                좁은 화면에서 단계가 두 칸으로 눕더라도 둘은 폭을 다 쓴다. */}
+            <div className="flex flex-col gap-3 sm:col-span-2 lg:col-span-1">
+              <Button
+                size="lg"
+                className="h-[43px] w-full font-bold"
+                disabled={!cardPlan || generating}
+                onClick={handleGenerate}
+              >
+                <Sparkles className={cn(generating && "animate-pulse")} />
+                {generating ? "AI 카드뉴스 생성중…" : "AI 생성하기"}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="lg"
+                className="h-[42px] w-full bg-card"
+                disabled={!exportable || exporting}
+                onClick={handleExport}
+                title={
+                  pendingCards > 0
+                    ? `카드 ${pendingCards}장이 아직 만들어지는 중입니다`
+                    : undefined
+                }
+              >
+                <Download className={cn(exporting && "animate-pulse")} />
+                {exporting ? "내보내는 중…" : "내보내기"}
+              </Button>
+
+              {exportNote && (
+                <p className="px-1 text-xs text-muted-foreground">
+                  {exportNote}
+                </p>
+              )}
+            </div>
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void readFile(file);
-            }}
-          />
-
-          {fileError && (
-            <p className="px-1 text-xs text-destructive">{fileError}</p>
-          )}
-
-          {/* 2. 공구 선택 — 한 파일에 공구가 여러 건 들어 있다 */}
-          <StepCard
-            num={2}
-            title="공구 선택"
-            state={eventState}
-            subtitle={eventSubtitle()}
-          />
-
-          {/* 3. 카드 구성 확인 */}
-          <StepCard
-            num={3}
-            title="카드 구성 확인"
-            state={planState}
-            subtitle={planSubtitle()}
-          />
-
-          {/* 4. 추가 인스트럭션 */}
-          <StepCard
-            num={4}
-            title="추가 인스트럭션"
-            state={instructionState}
-            subtitle="(선택)"
-          />
-
-          <Button
-            size="lg"
-            className="mt-1 w-full"
-            disabled={!cardPlan || generating}
-            onClick={handleGenerate}
-          >
-            <Sparkles className={cn(generating && "animate-pulse")} />
-            {generating ? "AI 카드뉴스 생성중…" : "AI 생성하기"}
-          </Button>
         </aside>
 
-        {/* ── 우측 결과 영역 ── */}
-        <section>
-          {source ? (
-            <div className="flex flex-col gap-5">
-              {/* 공구가 여러 건일 때만 고르는 화면을 둔다 */}
-              {events.length > 1 && (
-                <EventPicker
-                  events={events}
-                  selected={selectedEvent}
-                  onSelect={(index) => selectEvent(source, index)}
-                />
-              )}
+        {/* ── 우측 워크스페이스 ── */}
+        <main className="min-w-0 flex-1 p-4 lg:py-[29px] lg:pr-[35px] lg:pl-[21px]">
+          <section className="rounded-xl border bg-card p-5 shadow-[0_1px_3px_rgba(0,0,0,0.025)] lg:min-h-[calc(100vh-119px)] lg:px-[27px] lg:pt-[26px] lg:pb-[35px]">
+            <div className="mb-4 flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <h1 className="text-[17px] font-bold tracking-[-0.5px]">
+                {workspaceTitle()}
+              </h1>
 
-              {data ? (
-                <>
+              {status && (
+                <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                  {status.done ? (
+                    <Check className="size-3.5 text-primary" />
+                  ) : (
+                    <Loader2 className="size-3.5 animate-spin text-primary" />
+                  )}
+                  {status.text}
+                </p>
+              )}
+            </div>
+
+            {source ? (
+              data ? (
+                <PanelStack>
+                  {/* 공구가 여러 건일 때만 고르는 구획을 둔다 */}
+                  {events.length > 1 && (
+                    <EventPicker
+                      events={events}
+                      selected={selectedEvent}
+                      onSelect={(index) => selectEvent(source, index)}
+                    />
+                  )}
+
                   <DataPanel data={data} />
 
                   <CardPlan
@@ -487,59 +544,55 @@ export default function CardNewsPage() {
                   />
 
                   {/* 추가 인스트럭션 — 구성안을 확인한 뒤에 적는다 */}
-                  <InstructionBox
-                    value={instruction}
-                    onChange={setInstruction}
-                  />
+                  <InstructionBox value={instruction} onChange={setInstruction} />
 
-                  {/* 카드 초안 */}
-                  {drafts ? (
-                    <div className="flex flex-col gap-2">
-                      {exportNote && (
-                        <p className="px-1 text-xs text-muted-foreground">
-                          {exportNote}
-                        </p>
-                      )}
+                  {/* 카드 초안 — 장수와 진행 상황은 위 머리글이 맡는다 */}
+                  <Panel title="카드뉴스 초안">
+                    {drafts ? (
                       <CardDraftGrid cards={drafts} />
-                    </div>
-                  ) : draftLoading && cardPlan ? (
-                    // 몇 장을 만들지는 구성안에 이미 정해져 있다. 그 수만큼 자리를 깔아 둔다.
-                    <CardDraftSkeleton count={cardPlan.length} />
-                  ) : (
-                    <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">
-                      {draftError ?? "생성하면 이 자리에 카드가 표시됩니다"}
-                    </div>
-                  )}
-                </>
+                    ) : draftLoading && cardPlan ? (
+                      // 몇 장을 만들지는 구성안에 이미 정해져 있다. 그 수만큼 자리를 깔아 둔다.
+                      <CardDraftSkeleton count={cardPlan.length} />
+                    ) : (
+                      <div className="rounded-xl border border-dashed px-5 py-10 text-center text-sm text-muted-foreground">
+                        {draftError ?? "생성하면 이 자리에 카드가 표시됩니다"}
+                      </div>
+                    )}
+                  </Panel>
+                </PanelStack>
               ) : (
-                <div className="rounded-xl border border-dashed px-5 py-16 text-center text-sm text-muted-foreground">
-                  위에서 카드뉴스를 만들 공구를 골라주세요
+                <PanelStack>
+                  <EventPicker
+                    events={events}
+                    selected={selectedEvent}
+                    onSelect={(index) => selectEvent(source, index)}
+                  />
+                </PanelStack>
+              )
+            ) : (
+              <div className="flex min-h-[420px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed">
+                <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+                  <FileJson className="size-5 text-muted-foreground" />
                 </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex min-h-[560px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-card">
-              <div className="flex size-12 items-center justify-center rounded-full bg-muted">
-                <FileJson className="size-5 text-muted-foreground" />
+                <p className="text-center text-sm text-muted-foreground">
+                  아직 업로드된 데이터가 없습니다
+                  <br />
+                  왼쪽 1단계에서 공구 JSON을 올려주세요
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-1"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload />
+                  파일 선택
+                </Button>
               </div>
-              <p className="text-center text-sm text-muted-foreground">
-                아직 업로드된 데이터가 없습니다
-                <br />
-                왼쪽 1단계에서 공구 JSON을 올려주세요
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload />
-                파일 선택
-              </Button>
-            </div>
-          )}
-        </section>
-      </main>
+            )}
+          </section>
+        </main>
+      </div>
     </div>
   );
 }

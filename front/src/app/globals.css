@@ -59,53 +59,61 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* 브랜드 메인 컬러 #0145F5 = oklch(0.4976 0.2645 263.53)
-   흰 글자를 얹었을 때 대비 6.62:1 로 본문 기준(4.5:1)을 넘는다.
+/* 브랜드 메인 컬러 #2f5bea = oklch(0.5334 0.221 265.79)
+   흰 글자를 얹었을 때 대비 5.52:1 로 본문 기준(4.5:1)을 넘는다.
 
    배경·본문·테두리는 무채색으로 두고 브랜드 색은 '지금 할 일'과 '고른 것'에만 쓴다.
    전부 파랗게 칠하면 어디를 봐야 할지가 사라진다. */
 :root {
-  --brand-h: 263.53;
+  --brand-h: 265.79;
 
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* 시안 본문색 #222 */
+  --foreground: oklch(0.252 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.252 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.4976 0.2645 var(--brand-h));
+  --popover-foreground: oklch(0.252 0 0);
+  --primary: oklch(0.5334 0.221 var(--brand-h));
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.252 0 0);
+  /* 시안 스켈레톤 #f6f6f6 */
+  --muted: oklch(0.9731 0 0);
+  /* 시안의 보조 글자색은 #999(대비 2.85:1)라 본문 크기에서는 읽기 어렵다.
+     같은 '옅은 회색' 인상은 지키되 대비 4.6:1 을 넘는 값으로 한 단계만 낮춘다. */
   --muted-foreground: oklch(0.556 0 0);
-  /* 눌렀을 때나 마우스를 올렸을 때 깔리는 옅은 브랜드 톤 */
-  --accent: oklch(0.958 0.025 var(--brand-h));
-  --accent-foreground: oklch(0.42 0.22 var(--brand-h));
+  /* 시안 활성 단계 배경 #edf3ff */
+  --accent: oklch(0.9631 0.0173 var(--brand-h));
+  --accent-foreground: oklch(0.5334 0.221 var(--brand-h));
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.4976 0.2645 var(--brand-h));
-  --chart-1: oklch(0.4976 0.2645 var(--brand-h));
-  --chart-2: oklch(0.62 0.19 var(--brand-h));
-  --chart-3: oklch(0.72 0.13 var(--brand-h));
-  --chart-4: oklch(0.82 0.08 var(--brand-h));
-  --chart-5: oklch(0.9 0.04 var(--brand-h));
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.4976 0.2645 var(--brand-h));
+  /* 시안 테두리 #e5e7eb */
+  --border: oklch(0.9276 0.0058 var(--brand-h));
+  --input: oklch(0.9276 0.0058 var(--brand-h));
+  --ring: oklch(0.5334 0.221 var(--brand-h));
+  --chart-1: oklch(0.5334 0.221 var(--brand-h));
+  --chart-2: oklch(0.64 0.18 var(--brand-h));
+  --chart-3: oklch(0.73 0.13 var(--brand-h));
+  --chart-4: oklch(0.83 0.08 var(--brand-h));
+  --chart-5: oklch(0.91 0.04 var(--brand-h));
+  /* 시안 버튼 9px · 카드 12~13px(= --radius-xl) */
+  --radius: 0.5625rem;
+  /* 시안 좌측 단계 영역 #ededed */
+  --sidebar: oklch(0.9461 0 0);
+  --sidebar-foreground: oklch(0.252 0 0);
+  --sidebar-primary: oklch(0.5334 0.221 var(--brand-h));
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.958 0.025 var(--brand-h));
-  --sidebar-accent-foreground: oklch(0.42 0.22 var(--brand-h));
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.4976 0.2645 var(--brand-h));
+  --sidebar-accent: oklch(0.9631 0.0173 var(--brand-h));
+  --sidebar-accent-foreground: oklch(0.5334 0.221 var(--brand-h));
+  /* 시안 활성 단계 테두리 #6f96ff */
+  --sidebar-border: oklch(0.6927 0.1605 var(--brand-h));
+  --sidebar-ring: oklch(0.5334 0.221 var(--brand-h));
 }
 
-/* 어두운 배경에서는 원본 #0145F5 가 가라앉아 잘 안 보인다.
+/* 어두운 배경에서는 원본 #2f5bea 가 가라앉아 잘 안 보인다.
    색상(hue)은 그대로 두고 밝기만 올려 같은 파랑으로 읽히게 한다. */
 .dark {
-  --brand-h: 263.53;
+  --brand-h: 265.79;
 
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -113,7 +121,7 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.63 0.215 var(--brand-h));
+  --primary: oklch(0.66 0.19 var(--brand-h));
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
@@ -124,18 +132,18 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.63 0.215 var(--brand-h));
-  --chart-1: oklch(0.63 0.215 var(--brand-h));
-  --chart-2: oklch(0.7 0.16 var(--brand-h));
-  --chart-3: oklch(0.78 0.11 var(--brand-h));
-  --chart-4: oklch(0.85 0.07 var(--brand-h));
-  --chart-5: oklch(0.91 0.04 var(--brand-h));
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-primary: oklch(0.63 0.215 var(--brand-h));
+  --ring: oklch(0.66 0.19 var(--brand-h));
+  --chart-1: oklch(0.66 0.19 var(--brand-h));
+  --chart-2: oklch(0.72 0.15 var(--brand-h));
+  --chart-3: oklch(0.79 0.11 var(--brand-h));
+  --chart-4: oklch(0.86 0.07 var(--brand-h));
+  --chart-5: oklch(0.92 0.04 var(--brand-h));
+  --sidebar: oklch(0.19 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.66 0.19 var(--brand-h));
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.32 0.075 var(--brand-h));
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.63 0.215 var(--brand-h));
+  --sidebar-border: oklch(0.55 0.14 var(--brand-h));
+  --sidebar-ring: oklch(0.66 0.19 var(--brand-h));
 }
