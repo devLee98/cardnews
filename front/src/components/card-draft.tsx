@@ -27,46 +27,21 @@ export type DraftCard = CardText & {
 /** 문구를 쓰는 동안 만들어질 카드 수만큼 자리를 잡아 둔다. */
 export function CardDraftSkeleton({ count }: { count: number }) {
   return (
-    <section className="rounded-xl border bg-card">
-      <div className="flex items-center gap-3 px-5 pt-5">
-        <h2 className="text-sm font-semibold">카드뉴스 초안 · {count}장</h2>
-        <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin text-primary" />
-          AI가 카드 문구를 쓰는 중
-        </span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 p-5 xl:grid-cols-3">
-        {Array.from({ length: count }, (_, index) => (
-          <Skeleton key={index} className="aspect-4/5 rounded-lg" />
-        ))}
-      </div>
-    </section>
+    <div className="grid grid-cols-2 gap-5 lg:grid-cols-3">
+      {Array.from({ length: count }, (_, index) => (
+        <Skeleton key={index} className="aspect-4/5 rounded-lg" />
+      ))}
+    </div>
   );
 }
 
 export function CardDraftGrid({ cards }: { cards: DraftCard[] }) {
-  const done = cards.filter((card) => card.imageStatus === "ready").length;
-
   return (
-    <section className="rounded-xl border bg-card">
-      <div className="flex items-center gap-3 px-5 pt-5">
-        <h2 className="text-sm font-semibold">
-          카드뉴스 초안 · {cards.length}장
-        </h2>
-        <span className="ml-auto text-xs text-muted-foreground">
-          {done < cards.length
-            ? `카드 만드는 중 ${done}/${cards.length}`
-            : "생성 완료"}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 p-5 xl:grid-cols-3">
-        {cards.map((card, index) => (
-          <CardView key={`${index}-${card.section}`} card={card} index={index} />
-        ))}
-      </div>
-    </section>
+    <div className="grid grid-cols-2 gap-5 lg:grid-cols-3">
+      {cards.map((card, index) => (
+        <CardView key={`${index}-${card.section}`} card={card} index={index} />
+      ))}
+    </div>
   );
 }
 

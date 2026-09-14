@@ -2,6 +2,7 @@
 
 import { Check, Package } from "lucide-react";
 
+import { Panel } from "@/components/panel";
 import type { EventOption } from "@/lib/events";
 import { cn } from "@/lib/utils";
 
@@ -21,17 +22,12 @@ export function EventPicker({
   onSelect: (index: number) => void;
 }) {
   return (
-    <section className="rounded-xl border bg-card">
-      <div className="flex items-center gap-3 px-5 pt-5">
-        <h2 className="text-sm font-semibold">공구 선택</h2>
-        <span className="text-xs text-muted-foreground">
-          공구 {events.length}건이 들어 있습니다 · 카드뉴스를 만들 공구 하나를
-          골라주세요
-        </span>
-      </div>
-
+    <Panel
+      title="공구 선택"
+      hint={`공구 ${events.length}건이 들어 있습니다 · 카드뉴스를 만들 공구 하나를 골라주세요`}
+    >
       {/* 공구명이 길어서 두 열로 두면 잘린다. 한 줄에 하나씩 편다. */}
-      <div className="flex flex-col gap-2.5 px-5 pt-4 pb-5">
+      <div className="flex flex-col gap-2.5">
         {events.map((event) => {
           const picked = event.index === selected;
 
@@ -41,10 +37,10 @@ export function EventPicker({
               type="button"
               onClick={() => onSelect(event.index)}
               className={cn(
-                "flex items-start gap-2.5 rounded-lg border-2 px-3.5 py-3 text-left transition",
+                "flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-left transition",
                 picked
-                  ? "border-primary bg-primary/5"
-                  : "border-muted hover:border-muted-foreground/40",
+                  ? "border-primary bg-accent"
+                  : "border-border hover:border-muted-foreground/40",
               )}
             >
               <span
@@ -73,11 +69,10 @@ export function EventPicker({
       </div>
 
       {selected !== null && (
-        <p className="border-t px-5 py-3 text-xs text-muted-foreground">
-          다른 공구를 고르면 지금까지 만든 구성안과 카드는 모두 새로
-          만들어집니다.
+        <p className="mt-3 text-xs text-muted-foreground">
+          다른 공구를 고르면 지금까지 만든 구성안과 카드는 모두 새로 만들어집니다.
         </p>
       )}
-    </section>
+    </Panel>
   );
 }
