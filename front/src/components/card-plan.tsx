@@ -20,7 +20,7 @@ export function CardPlan({
   onRetry: () => void;
 }) {
   return (
-    <section className="rounded-xl border border-primary/60 bg-card pb-5">
+    <section className="rounded-xl border bg-card pb-5">
       <div className="flex items-center gap-3 px-5 pt-5">
         <h2 className="text-sm font-semibold">
           AI가 제안한 카드 구성안

@@ -168,7 +168,9 @@ CARD_STAGES: list[CardStage] = [
             "자체 제품 리뷰와 네이버 리뷰를 근거로 삼되, 데이터가 있으면 제품의 특성과 "
             "스펙을 활용해 어필한다."
         ),
-        "constraint": None,
+        "constraint": (
+            "리뷰 수는 숫자로 적지 않는다. 평점과 후기 내용으로 근거를 댄다."
+        ),
     },
     {
         "stage": "인플 코멘트",
@@ -214,16 +216,38 @@ CARD_STAGES: list[CardStage] = [
         "stage": "홍보/전파",
         "group": "부추기기",
         "core": False,
-        "required": ["events[].reservation.add_count"],
+        # 알림 신청수(reservation.add_count)를 일부러 빼 두었다.
+        # 정확한 숫자를 보여주지 않기로 했고, 경로를 주지 않으면 값 자체가 넘어가지 않아
+        # 실수로 적을 일이 없다. 아래 제약은 그 위에 한 겹 더 두는 것이다.
+        #
+        # lowest_price 를 필수로 두면 그 값이 통째로 없는 공구에서 카드가 사라진다.
+        # (실제로 8건 중 1건이 그렇다) 가격 이야기를 못 해도 리뷰로는 어필할 수 있으므로
+        # 리뷰 수만 필수로 둔다. 가격은 있을 때만 쓰는 쪽이 맞다.
+        "required": ["events[].products[].naver_review_count"],
         "optional": [
+            "events[].products[].lowest_price",
+            # 타채널 최저가는 공구가와 나란히 놓아야 싼지 비싼지 말할 수 있다
+            "events[].products[].base_sale_price",
+            "events[].products[].discount_rate_derived",
+            "events[].products[].naver_rating",
+            # reviews[].body 대신 reviews 를 통째로 준다.
+            # 별점이 함께 넘어와야 낮은 별점 리뷰를 걸러 낼 수 있다.
+            "events[].products[].reviews",
             "events[].curator",
             "events[].products[].minimum_sales_quantity",
         ],
         "purpose": (
-            "알림 신청수와, 데이터가 있으면 공구 가능 최소 수량을 통해 참여와 전파를 유도한다. "
-            "인플루언서 정보도 활용해 어필한다."
+            "다른 곳보다 싸게 산다는 것과 리뷰가 쌓여 있다는 것을 근거로 한 번 더 어필해 "
+            "참여와 전파를 유도한다. 네이버 리뷰와 자체 리뷰를 함께 쓰고, "
+            "데이터가 있으면 공구 가능 최소 수량과 인플루언서 정보도 활용한다."
         ),
-        "constraint": None,
+        "constraint": (
+            "알림 신청수는 정확한 숫자로 적지 않는다. "
+            "리뷰 수도 숫자로 적지 않는다. 먼저 써 본 사람이 많다는 것만 말로 전한다. "
+            "타채널 최저가(lowest_price)는 공구가와 견줄 때만 쓰고, "
+            "공구가가 더 쌀 때만 싸다고 말한다. 값이 같거나 없으면 가격 이야기를 하지 않는다. "
+            "리뷰를 인용할 때는 별점이 높은 것만 쓴다."
+        ),
     },
     {
         "stage": "CTA",

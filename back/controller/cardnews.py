@@ -15,14 +15,23 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 import avatar
-from assets import gather_candidates, to_supported
+from assets import (
+    ACCENT_IMAGES,
+    fit_to_card,
+    gather_candidates,
+    pick_accent,
+    to_supported,
+)
 from card_spec import CARD_STAGES, MAX_CARDS
+from comparison import build_comparison, render_comparison, summarize_comparison
 from inventory import (
     build_inventory,
     empty_paths,
+    extract_product_rows,
     extract_values,
     find_image_urls,
     render_inventory,
+    split_product_paths,
 )
 from prompts import (
     ASSET_RESPONSE_SCHEMA,
@@ -155,6 +164,10 @@ async def create_plan(payload: PlanRequest):
         )
 
     missing = empty_paths(inventory)
+
+    # 비교표는 inventory 표에 실리지 않는다. 어떤 소재가 있는지만 따로 알려준다.
+    comparison = summarize_comparison(build_comparison(payload.data))
+
     client = _client()
 
     options: dict[str, Any] = {}
@@ -168,7 +181,9 @@ async def create_plan(payload: PlanRequest):
                 {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": build_plan_prompt(render_inventory(inventory), missing),
+                    "content": build_plan_prompt(
+                        render_inventory(inventory), missing, comparison
+                    ),
                 },
             ],
             response_format={
@@ -326,7 +341,13 @@ async def fetch_asset(url: str):
                 status_code=502, detail=f"내려받을 수 없는 형식입니다: {fmt}"
             )
 
-    return Response(content=response.content, media_type=content_type)
+    # 4:5 로 맞춰서 내보낸다. 움짤 카드는 원본을 그대로 쓰기 때문에 비율이 제각각이라,
+    # 손대지 않으면 4:5 카드 아홉 장 사이에 혼자 다른 비율로 끼게 된다.
+    # 맞추지 못하면 원본을 그대로 준다. 비율이 안 맞아도 카드가 빠지는 것보다 낫다.
+    fitted = fit_to_card(response.content, content_type)
+    content, content_type = fitted or (response.content, content_type)
+
+    return Response(content=content, media_type=content_type)
 
 
 # ────────────────────────────────────────────────
@@ -537,7 +558,16 @@ async def create_draft(payload: DraftRequest):
 
     # 구성안이 지목한 경로의 실제 값만 뽑는다. 원본 JSON 은 너무 커서 그대로 못 보낸다.
     paths = sorted({path for card in payload.cards for path in card.source_keys})
-    values = extract_values(payload.data, paths)
+
+    # 상품 단위 값은 상품별로 묶어서 따로 넘긴다.
+    # 한 목록에 섞어 두면 어느 값이 어느 상품 것인지 알 수 없어 숫자가 어긋난다.
+    product_paths, other_paths = split_product_paths(payload.data, paths)
+    values = extract_values(payload.data, other_paths)
+    product_rows = extract_product_rows(payload.data, product_paths)
+
+    # 비교표는 구성안이 고른 경로와 상관없이 늘 넘긴다.
+    # 경로로 고를 수 있는 값이 아니라 걸러 낸 결과이기 때문이다.
+    comparison = render_comparison(build_comparison(payload.data))
 
     plan = [card.model_dump(by_alias=False) for card in payload.cards]
 
@@ -567,6 +597,8 @@ async def create_draft(payload: DraftRequest):
                         values,
                         payload.instruction,
                         catalog,
+                        comparison,
+                        product_rows,
                     ),
                 },
             ],
@@ -631,9 +663,14 @@ async def create_draft(payload: DraftRequest):
         cards.append(
             DraftCard(
                 section=card.section,
-                title=source.get("title", ""),
-                body=source.get("body", ""),
-                highlight=source.get("highlight", ""),
+                # 움짤 카드는 문구를 비운다.
+                # 원본을 그대로 쓰는 카드라 글자를 이미지 안에 그려 넣을 수가 없다.
+                # 화면에서만 아래에 붙여 두면 내보낼 때 그 글자가 사라져서,
+                # 미리 보던 카드와 저장된 카드가 달라진다.
+                # 움직임 하나로 보여주는 카드로 두는 편이 낫다.
+                title="" if use_animated else source.get("title", ""),
+                body="" if use_animated else source.get("body", ""),
+                highlight="" if use_animated else source.get("highlight", ""),
                 textPosition=_pick(
                     source.get("text_position"), TEXT_POSITIONS, "bottom"
                 ),
@@ -646,7 +683,7 @@ async def create_draft(payload: DraftRequest):
                         original=item.get("original", ""),
                         discount=item.get("discount", ""),
                     )
-                    for item in items[:MAX_ITEMS]
+                    for item in ([] if use_animated else items[:MAX_ITEMS])
                     if item.get("label") or item.get("value")
                 ],
                 referenceUrl="" if use_animated else chosen,
@@ -692,6 +729,14 @@ def _place_picked_animations(
 
         cards[target].animated_url = asset.url
         cards[target].reference_url = ""
+
+        # 여기서 움짤로 바뀐 카드도 문구를 비운다.
+        # 위 반복문에서 이미 비운 카드와 같은 규칙이어야 한다.
+        cards[target].title = ""
+        cards[target].body = ""
+        cards[target].highlight = ""
+        cards[target].items = []
+
         used.add(asset.url)
 
 
@@ -816,6 +861,41 @@ async def _download(url: str) -> tuple[bytes, str] | None:
         return None
 
 
+#: 공구마다 포인트 색을 한 번만 계산해 둔다.
+#: 카드는 한 장씩 따로 만들어지므로 캐시가 없으면 같은 사진을 카드 수만큼 다시 받는다.
+_ACCENT_CACHE: dict[str, str] = {}
+
+#: 포인트 색을 뽑을 사진. 상품 대표컷이다.
+ACCENT_PATH = "events[].products[].image_url"
+
+
+async def _accent_color(data: Any, *, on_dark: bool) -> str:
+    """이 공구의 포인트 색.
+
+    카드는 한 장씩 따로 만들어지지만 색은 공구 하나에 하나여야 한다.
+    카드가 제 참조컷에서 뽑으면 카드마다 색이 달라져 시리즈가 흐트러진다.
+    그래서 카드가 무엇을 골랐든 늘 같은 대표컷 목록에서 뽑는다.
+    """
+
+    urls = find_image_urls(data, [ACCENT_PATH], limit=ACCENT_IMAGES)
+
+    if not urls:
+        return ""
+
+    key = f"{'|'.join(urls)}|{on_dark}"
+
+    if key in _ACCENT_CACHE:
+        return _ACCENT_CACHE[key]
+
+    downloaded = await asyncio.gather(*(_download(url) for url in urls))
+    images = [item[0] for item in downloaded if item]
+
+    accent = pick_accent(images, on_dark=on_dark) or ""
+    _ACCENT_CACHE[key] = accent
+
+    return accent
+
+
 @router.post("/image", response_model=ImageResponse, response_model_by_alias=True)
 async def create_image(payload: ImageRequest):
     """카드 1장의 배경 이미지를 만든다. 문구는 얹지 않고 그림만 만든다."""
@@ -835,6 +915,11 @@ async def create_image(payload: ImageRequest):
 
     # 카드마다 고른 상세컷을 맨 앞에 둔다. 그 장면을 가장 강하게 따라가게 된다.
     urls = find_image_urls(payload.data, paths, limit=12)
+
+    theme = _pick(payload.theme, THEMES, "dark")
+
+    accent = await _accent_color(payload.data, on_dark=theme == "dark")
+
     if payload.reference_url:
         urls = [payload.reference_url] + [
             url for url in urls if url != payload.reference_url
@@ -864,7 +949,8 @@ async def create_image(payload: ImageRequest):
         has_reference=bool(references),
         text_position=text_position,
         text_align=_pick(payload.text_align, TEXT_ALIGNS, "left"),
-        theme=_pick(payload.theme, THEMES, "dark"),
+        theme=theme,
+        accent=accent,
         avatar_corner=corner,
         instruction=payload.instruction,
     )
