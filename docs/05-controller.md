@@ -62,7 +62,7 @@
 | 텍스트 모델 | `gpt-5` | ①②③번에서 사용 |
 | 추론 강도 | `low` | ①구성안·②이미지검수 |
 | **추론 강도 (문구)** | `medium` | ③문구·디자인 **— 여기만 따로 높입니다** |
-| 이미지 모델 | `gpt-image-2` | ④번에서 사용 |
+| 이미지 모델 | `gpt-image-2.5-sunburst` | ④번에서 사용 — 아래 참고 |
 | 이미지 화질 | *(모델 기본값)* | `high` 로 올려 봤다가 되돌림 — 아래 참고 |
 | 참조 충실도 | *(꺼짐)* | `gpt-image-1` 계열 전용 — 아래 참고 |
 | 이미지 형식 | `png` | 화면에서 그대로 내려받을 수 있게 고정 (코드 상수) |
@@ -71,8 +71,30 @@
 
 ```
 OPENAI_IMAGE_QUALITY=          # 비워 두면 모델이 알아서 판단
-OPENAI_INPUT_FIDELITY=         # 비워 둔다. gpt-image-2 에서는 켜면 안 된다
+OPENAI_INPUT_FIDELITY=         # 비워 둔다. gpt-image-2 / 2.5 에서는 켜면 안 된다
+OPENAI_IMAGE_MODEL=            # 비워 두면 gpt-image-2.5-sunburst
 ```
+
+### gpt-image-2.5 — sunburst 와 flare
+
+`gpt-image-2.5` 는 이름이 둘입니다. 공식 문서 기준으로 **sunburst** 는 "가장 뛰어난
+생성·편집 모델", **flare** 는 "가장 빠른 모델"이고, 토큰 단가는 둘 다 `gpt-image-2` 와 같습니다
+(이미지 출력 $30 / 1M 토큰).
+
+카드에 한글을 직접 그려 넣기 때문에 글자 품질이 먼저라 **sunburst 를 기본**으로 둡니다.
+같은 카드 프롬프트로 한 장씩 재 본 결과입니다.
+
+| 모델 | 생성 (참조 없음) | 편집 (참조 있음) |
+|---|---|---|
+| `gpt-image-2` | 19초 | 15초 |
+| `gpt-image-2.5-flare` | 15초 | 14초 |
+| `gpt-image-2.5-sunburst` | 24초 | 16초 |
+
+카드 대부분이 브랜드 상세컷을 참조로 넣는 편집이라 실제 체감 차이는 거의 없습니다.
+속도가 급하면 `.env` 에서 `OPENAI_IMAGE_MODEL=gpt-image-2.5-flare` 로 바꾸면 됩니다.
+
+> ⚠️ 2.5 도 `input_fidelity` 는 받지 않습니다. 켜면 `gpt-image-2` 때와 같은 400 이 납니다.
+> `quality=high` 는 받습니다 (편집 한 장 30초 — 기본값의 두 배).
 
 ### ⚠️ 화질을 `high` 로 올렸다가 되돌린 이유
 
@@ -92,10 +114,10 @@ OPENAI_INPUT_FIDELITY=         # 비워 둔다. gpt-image-2 에서는 켜면 안
 ### ⚠️ `input_fidelity` 는 지금 모델에서 못 씁니다
 
 참고 사진을 얼마나 그대로 따라갈지 정하는 옵션인데, **`gpt-image-1` 계열에만 있습니다.**
-`gpt-image-2` 에 넘기면 카드가 통째로 실패합니다.
+`gpt-image-2` 와 `2.5` 에 넘기면 카드가 통째로 실패합니다.
 
 ```
-400 - The model 'gpt-image-2' does not support the 'input_fidelity' parameter.
+400 - The model 'gpt-image-2.5-sunburst' does not support the 'input_fidelity' parameter.
 ```
 
 SDK 함수에는 이 파라미터가 있어서 넘길 수는 있지만, **모델이 받는지는 별개입니다.**

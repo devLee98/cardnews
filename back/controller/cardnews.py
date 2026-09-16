@@ -75,7 +75,12 @@ DRAFT_REASONING_EFFORT = os.getenv(
     "OPENAI_DRAFT_REASONING_EFFORT", "medium"
 ).strip()
 
-IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+# gpt-image-2.5 는 두 갈래다. sunburst 가 "가장 뛰어난 생성·편집" 모델이고
+# flare 는 "가장 빠른" 모델이다. 토큰 단가는 gpt-image-2 와 같다.
+# 카드에 한글을 직접 그려 넣기 때문에 글자 품질이 먼저라 sunburst 를 기본으로 둔다.
+# 같은 프롬프트로 재 봤을 때 참조 편집(edit)은 셋 다 15초 안팎으로 같았고,
+# 참조 없는 생성만 sunburst 가 5초쯤 더 걸렸다. 속도가 급하면 flare 로 바꾼다.
+IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-sunburst")
 
 # 카드에 글자를 직접 그려 넣기 때문에 화질이 곧 글자 선명도다.
 # 빈 값으로 두면 옵션을 빼고 부른다 (모델이 알아서 판단).
@@ -87,8 +92,8 @@ IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY", "").strip()
 
 # 참조로 넣은 브랜드 실사를 얼마나 그대로 따라갈지.
 #
-# ⚠️ gpt-image-1 계열 전용이다. gpt-image-2 에 넘기면 400 으로 카드가 통째로 실패한다.
-#      "The model 'gpt-image-2' does not support the 'input_fidelity' parameter."
+# ⚠️ gpt-image-1 계열 전용이다. gpt-image-2 와 2.5 에 넘기면 400 으로 카드가 통째로 실패한다.
+#      "The model 'gpt-image-2.5-sunburst' does not support the 'input_fidelity' parameter."
 #    그래서 기본값은 꺼 둔다. gpt-image-1 로 내릴 때만 켠다.
 INPUT_FIDELITY = os.getenv("OPENAI_INPUT_FIDELITY", "").strip()
 

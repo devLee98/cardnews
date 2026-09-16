@@ -129,10 +129,9 @@ export function GifPicker({
                   움짤
                 </Badge>
               </div>
-
-              <p className="line-clamp-2 px-1 py-1.5 text-[11px] leading-snug text-muted-foreground">
-                {gif.scene}
-              </p>
+              {/* AI 가 붙인 장면 설명(scene)은 화면에 적지 않는다. 움짤은 눈으로 보고
+                  고르는 것이라 설명이 도움이 안 되고, 첫 프레임만 보고 쓴 글이라
+                  내용과 어긋나기도 한다. alt 와 문구 단계 프롬프트에서는 계속 쓴다. */}
             </button>
           );
         })}
