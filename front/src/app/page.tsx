@@ -22,6 +22,7 @@ import {
   requestCardDraft,
   requestCardImage,
   requestCardPlan,
+  requestPlanItem,
   runWithLimit,
   type CardAsset,
   type CardPlanItem,
@@ -55,6 +56,9 @@ export default function CardNewsPage() {
   const [cardPlan, setCardPlan] = useState<CardPlanItem[] | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+  // 구성안에서 한 장만 다시 제안받는 중인 자리. 한 번에 한 장만 받는다.
+  const [planItemBusy, setPlanItemBusy] = useState<number | null>(null);
+  const [planItemError, setPlanItemError] = useState<string | null>(null);
 
   const [instruction, setInstruction] = useState("");
 
@@ -187,6 +191,9 @@ export default function CardNewsPage() {
     setPlanLoading(true);
     setPlanError(null);
     setCardPlan(null);
+    // 구성안이 통째로 바뀌므로 한 장 단위로 하던 일은 여기서 끝난 것으로 본다
+    setPlanItemBusy(null);
+    setPlanItemError(null);
 
     try {
       const result = await requestCardPlan(picked);
@@ -204,6 +211,45 @@ export default function CardNewsPage() {
     } finally {
       if (requestId === planIdRef.current) setPlanLoading(false);
     }
+  }
+
+  /** 구성안 한 장만 다시 제안받는다. 나머지 카드는 그대로 둔다. */
+  async function refreshPlanItem(index: number) {
+    if (!data || !cardPlan || planItemBusy !== null) return;
+
+    // 기다리는 동안 구성안이 통째로 바뀌면(공구 변경, 파일 재업로드) 이 응답은 버린다.
+    // 번호를 올리지는 않는다. 한 장 바꾸는 일로 전체 제안을 무효로 만들 이유는 없다.
+    const requestId = planIdRef.current;
+
+    setPlanItemBusy(index);
+    setPlanItemError(null);
+
+    try {
+      const result = await requestPlanItem(data, cardPlan, index);
+      if (requestId !== planIdRef.current) return;
+
+      setCardPlan((prev) =>
+        prev ? prev.map((item, i) => (i === index ? result.card : item)) : prev,
+      );
+    } catch (error) {
+      if (requestId !== planIdRef.current) return;
+
+      setPlanItemError(
+        error instanceof Error
+          ? error.message
+          : "카드를 다시 제안받지 못했습니다.",
+      );
+    } finally {
+      if (requestId === planIdRef.current) setPlanItemBusy(null);
+    }
+  }
+
+  /** 구성안에서 한 장을 뺀다. 다시 제안받는 중에는 자리가 밀리므로 받지 않는다. */
+  function removePlanItem(index: number) {
+    if (planItemBusy !== null) return;
+
+    setPlanItemError(null);
+    setCardPlan((prev) => (prev ? prev.filter((_, i) => i !== index) : prev));
   }
 
   async function loadAssets(picked: JsonValue) {
@@ -262,6 +308,8 @@ export default function CardNewsPage() {
     setCardPlan(null);
     setPlanLoading(false);
     setPlanError(null);
+    setPlanItemBusy(null);
+    setPlanItemError(null);
 
     setAssets([]);
     setPickedGif(null);
@@ -459,10 +507,12 @@ export default function CardNewsPage() {
             {/* 만들기와 내보내기는 한 덩어리로 둔다.
                 좁은 화면에서 단계가 두 칸으로 눕더라도 둘은 폭을 다 쓴다. */}
             <div className="flex flex-col gap-3 sm:col-span-2 lg:col-span-1">
+              {/* 구성안 한 장을 다시 제안받는 중이면 어느 구성안으로 만들지
+                  아직 정해지지 않은 상태라 만들기도 잠근다 */}
               <Button
                 size="lg"
                 className="h-[43px] w-full font-bold"
-                disabled={!cardPlan || generating}
+                disabled={!cardPlan || generating || planItemBusy !== null}
                 onClick={handleGenerate}
               >
                 <Sparkles className={cn(generating && "animate-pulse")} />
@@ -532,7 +582,11 @@ export default function CardNewsPage() {
                     plan={cardPlan}
                     loading={planLoading}
                     error={planError}
+                    busyIndex={planItemBusy}
+                    itemError={planItemError}
                     onRetry={() => void generatePlan(data)}
+                    onRefreshItem={(index) => void refreshPlanItem(index)}
+                    onRemoveItem={removePlanItem}
                   />
 
                   <GifPicker
