@@ -44,6 +44,23 @@ export function requestCardPlan(data: JsonValue) {
   return post<CardPlanResponse>("/api/cardnews/plan", { data });
 }
 
+/**
+ * 구성안 카드 한 장만 다시 제안받는다.
+ * 단계는 그대로 두고 설명과 쓸 데이터만 새로 온다. 나머지 카드는 건드리지 않는다.
+ * 다른 카드와 겹치지 않게 쓰려면 구성안 전체를 같이 넘겨야 한다.
+ */
+export function requestPlanItem(
+  data: JsonValue,
+  cards: CardPlanItem[],
+  index: number,
+) {
+  return post<{ card: CardPlanItem }>("/api/cardnews/plan/item", {
+    data,
+    cards,
+    index,
+  });
+}
+
 /* ── 카드 문구 ── */
 
 export type CardItem = {

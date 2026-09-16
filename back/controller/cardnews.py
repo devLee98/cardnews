@@ -39,10 +39,12 @@ from prompts import (
     DRAFT_RESPONSE_SCHEMA,
     DRAFT_SYSTEM_PROMPT,
     IMAGE_SIZE,
+    PLAN_ITEM_RESPONSE_SCHEMA,
     PLAN_RESPONSE_SCHEMA,
     PLAN_SYSTEM_PROMPT,
     build_draft_prompt,
     build_image_prompt,
+    build_plan_item_prompt,
     build_plan_prompt,
 )
 
@@ -73,7 +75,12 @@ DRAFT_REASONING_EFFORT = os.getenv(
     "OPENAI_DRAFT_REASONING_EFFORT", "medium"
 ).strip()
 
-IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+# gpt-image-2.5 는 두 갈래다. sunburst 가 "가장 뛰어난 생성·편집" 모델이고
+# flare 는 "가장 빠른" 모델이다. 토큰 단가는 gpt-image-2 와 같다.
+# 카드에 한글을 직접 그려 넣기 때문에 글자 품질이 먼저라 sunburst 를 기본으로 둔다.
+# 같은 프롬프트로 재 봤을 때 참조 편집(edit)은 셋 다 15초 안팎으로 같았고,
+# 참조 없는 생성만 sunburst 가 5초쯤 더 걸렸다. 속도가 급하면 flare 로 바꾼다.
+IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-sunburst")
 
 # 카드에 글자를 직접 그려 넣기 때문에 화질이 곧 글자 선명도다.
 # 빈 값으로 두면 옵션을 빼고 부른다 (모델이 알아서 판단).
@@ -85,8 +92,8 @@ IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY", "").strip()
 
 # 참조로 넣은 브랜드 실사를 얼마나 그대로 따라갈지.
 #
-# ⚠️ gpt-image-1 계열 전용이다. gpt-image-2 에 넘기면 400 으로 카드가 통째로 실패한다.
-#      "The model 'gpt-image-2' does not support the 'input_fidelity' parameter."
+# ⚠️ gpt-image-1 계열 전용이다. gpt-image-2 와 2.5 에 넘기면 400 으로 카드가 통째로 실패한다.
+#      "The model 'gpt-image-2.5-sunburst' does not support the 'input_fidelity' parameter."
 #    그래서 기본값은 꺼 둔다. gpt-image-1 로 내릴 때만 켠다.
 INPUT_FIDELITY = os.getenv("OPENAI_INPUT_FIDELITY", "").strip()
 
@@ -151,11 +158,10 @@ def _client():
     return AsyncOpenAI()
 
 
-@router.post("/plan", response_model=PlanResponse, response_model_by_alias=True)
-async def create_plan(payload: PlanRequest):
-    """업로드된 공구 데이터를 보고 만들 수 있는 카드 구성안을 뽑는다."""
+def _plan_inputs(data: Any) -> tuple[list[dict], list[str], str]:
+    """구성안 프롬프트에 들어갈 재료. 전체 제안과 한 장 다시 제안이 같은 것을 본다."""
 
-    inventory = build_inventory(payload.data)
+    inventory = build_inventory(data)
 
     if not inventory:
         raise HTTPException(
@@ -166,7 +172,13 @@ async def create_plan(payload: PlanRequest):
     missing = empty_paths(inventory)
 
     # 비교표는 inventory 표에 실리지 않는다. 어떤 소재가 있는지만 따로 알려준다.
-    comparison = summarize_comparison(build_comparison(payload.data))
+    comparison = summarize_comparison(build_comparison(data))
+
+    return inventory, missing, comparison
+
+
+async def _ask_planner(prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """구성안 기획자에게 묻는다. 시스템 프롬프트와 추론 강도는 전체·한 장 모두 같다."""
 
     client = _client()
 
@@ -179,17 +191,9 @@ async def create_plan(payload: PlanRequest):
             model=TEXT_MODEL,
             messages=[
                 {"role": "system", "content": PLAN_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": build_plan_prompt(
-                        render_inventory(inventory), missing, comparison
-                    ),
-                },
+                {"role": "user", "content": prompt},
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": PLAN_RESPONSE_SCHEMA,
-            },
+            response_format={"type": "json_schema", "json_schema": schema},
             **options,
         )
     except HTTPException:
@@ -205,7 +209,21 @@ async def create_plan(payload: PlanRequest):
     if not content:
         raise HTTPException(status_code=502, detail="구성안 응답이 비어 있습니다.")
 
-    cards = json.loads(content).get("cards", [])
+    return json.loads(content)
+
+
+@router.post("/plan", response_model=PlanResponse, response_model_by_alias=True)
+async def create_plan(payload: PlanRequest):
+    """업로드된 공구 데이터를 보고 만들 수 있는 카드 구성안을 뽑는다."""
+
+    inventory, missing, comparison = _plan_inputs(payload.data)
+
+    body = await _ask_planner(
+        build_plan_prompt(render_inventory(inventory), missing, comparison),
+        PLAN_RESPONSE_SCHEMA,
+    )
+
+    cards = body.get("cards", [])
 
     # 같은 단계가 두 번 나오는 것을 막고, 명세 순서(데려오기 → 믿음주기 → 부추기기)로 되돌린다.
     seen: set[str] = set()
@@ -244,6 +262,71 @@ async def create_plan(payload: PlanRequest):
             for card in unique[:MAX_CARDS]
         ],
         emptyKeys=missing,
+    )
+
+
+# ────────────────────────────────────────────────
+# 구성안 한 장만 다시 제안
+#
+# 구성안에서 마음에 안 드는 카드가 하나뿐인데 전체를 다시 제안받으면
+# 마음에 들던 나머지 카드까지 같이 바뀐다. 그 한 장만 새로 받는다.
+# ────────────────────────────────────────────────
+
+
+class PlanItemRequest(BaseModel):
+    data: Any
+    #: 화면에 떠 있는 구성안 전체. 다른 카드와 겹치지 않게 쓰려면 다 봐야 한다.
+    cards: list[PlanCard]
+    #: 그중 다시 쓸 카드의 자리
+    index: int
+
+
+class PlanItemResponse(BaseModel):
+    card: PlanCard
+
+
+@router.post(
+    "/plan/item", response_model=PlanItemResponse, response_model_by_alias=True
+)
+async def refresh_plan_item(payload: PlanItemRequest):
+    """구성안 카드 한 장만 다시 제안받는다. 단계는 그대로, 설명과 쓸 데이터만 새로 온다."""
+
+    if not payload.cards:
+        raise HTTPException(status_code=400, detail="카드 구성안이 비어 있습니다.")
+
+    if not 0 <= payload.index < len(payload.cards):
+        raise HTTPException(
+            status_code=400, detail="다시 제안할 카드의 번호가 맞지 않습니다."
+        )
+
+    target = payload.cards[payload.index]
+
+    if target.section not in STAGE_ORDER:
+        raise HTTPException(
+            status_code=400, detail=f"알 수 없는 단계입니다: {target.section}"
+        )
+
+    inventory, missing, comparison = _plan_inputs(payload.data)
+
+    body = await _ask_planner(
+        build_plan_item_prompt(
+            render_inventory(inventory),
+            missing,
+            comparison,
+            [card.model_dump(by_alias=False) for card in payload.cards],
+            payload.index,
+        ),
+        PLAN_ITEM_RESPONSE_SCHEMA,
+    )
+
+    # 단계는 요청한 것을 그대로 쓴다. 프롬프트로도 막았지만, 여기서 바뀌면
+    # 전체 제안이 지켜 둔 순서와 중복 없음이 한 장 때문에 깨진다.
+    return PlanItemResponse(
+        card=PlanCard(
+            section=target.section,
+            sourceKeys=body.get("source_keys", []),
+            description=body.get("description", ""),
+        )
     )
 
 
